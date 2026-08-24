@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CustomNote — Minimalist Freeform Canvas</title>
+  <meta name="description" content="A distraction-free, zero-chrome infinite canvas note-taking experience inspired by OneNote.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="theme-dark">
+  <!-- Infinite Canvas Viewport -->
+  <div id="viewport" class="viewport" tabindex="0">
+    <!-- GPU-Accelerated Dynamic Grid Layer -->
+    <div id="grid-layer" class="grid-layer"></div>
+
+    <!-- Scalable / Pannable World Container -->
+    <div id="canvas-world" class="canvas-world">
+      <!-- Vector Drawings Layer (positioned below notes, above grid) -->
+      <svg id="drawings-layer" class="drawings-layer" viewBox="-100000 -100000 200000 200000"></svg>
+      <!-- Notes Container -->
+      <div id="notes-layer" class="notes-layer"></div>
+    </div>
+  </div>
+
+  <!-- Ambient Minimalist Floating Indicators & Controls (Fades in only when active/needed) -->
+  <div id="zoom-badge" class="ambient-pill zoom-badge">100%</div>
+
+  <!-- Ambient Drawing Tool Dock (Select, Pencil, Line, Eraser, Undo) -->
+  <div id="tool-dock" class="tool-dock">
+    <button class="tool-btn active" data-tool="select" title="Select / Pan (V or Esc)" aria-label="Select Tool">
+      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 3l7 18 3-7 7-3L3 3z"></path>
+      </svg>
+    </button>
+    <button class="tool-btn" data-tool="pencil" title="Pencil / Freehand (P)" aria-label="Pencil Tool">
+      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+      </svg>
+    </button>
+    <button class="tool-btn" data-tool="line" title="Straight Line (L)" aria-label="Line Tool">
+      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="5" y1="19" x2="19" y2="5"></line>
+        <circle cx="5" cy="19" r="1.5" fill="currentColor"></circle>
+        <circle cx="19" cy="5" r="1.5" fill="currentColor"></circle>
+      </svg>
+    </button>
+    <button class="tool-btn" data-tool="eraser" title="Eraser (E)" aria-label="Eraser Tool">
+      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 20H7L3 16C2 15 2 13 3 12L13 2L22 11L18 15"></path>
+        <path d="M7 16L16 7"></path>
+      </svg>
+    </button>
+    <span class="tool-dock-divider"></span>
+    <button class="tool-btn" id="undo-btn" title="Undo Stroke (Ctrl+Z)" aria-label="Undo">
+      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="1 4 1 10 7 10"></polyline>
+        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+      </svg>
+    </button>
+  </div>
+
+  <!-- ═══ ACTIVITY RAIL (detachable — see activity.js for removal instructions) ═══ -->
+  <div id="activity-widget" class="activity-rail" aria-label="Activity Rail">
+    <div id="activity-grid" class="activity-grid"></div>
+  </div>
+  <!-- ═══ END ACTIVITY RAIL ═══ -->
+
+  <!-- Mobile Mode Dot: White (Read Mode) / Dark (Edit Mode, double-tap toggle) -->
+  <div id="mobile-mode-dot" class="mobile-mode-dot" title="Double tap to toggle Edit Mode" aria-label="Mobile Mode Indicator"></div>
+
+  <!-- Subtle Ambient HUD in bottom-right (Completely unobtrusive, reveals softly on hover) -->
+  <div class="ambient-hud">
+    <button id="settings-btn" class="hud-btn" title="Settings" aria-label="Settings">
+      <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+      </svg>
+    </button>
+    <button id="shortcuts-help-btn" class="hud-btn" title="Keyboard Shortcuts (?)" aria-label="Keyboard Shortcuts">
+      <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"></circle>
+        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+      </svg>
+    </button>
+  </div>
+
+  <!-- Settings Modal Overlay -->
+  <div id="settings-modal" class="modal-backdrop hidden">
+    <div class="modal-card settings-card">
+      <div class="modal-header">
+        <h2>Canvas Settings</h2>
+        <button id="close-settings-btn" class="close-btn" aria-label="Close">&times;</button>
+      </div>
+      <div class="settings-body">
+        <!-- Account / Cloud Sync Section -->
+        <div class="settings-group auth-group">
+          <div class="auth-section">
+            <div id="auth-logged-out" class="auth-state">
+              <div class="auth-info">
+                <span class="setting-label">Cloud Backup & Sync</span>
+                <span class="setting-desc">Sign in to sync your notes across all your devices</span>
+              </div>
+              <button id="google-login-btn" class="google-auth-btn" type="button">
+                <svg viewBox="0 0 24 24" width="16" height="16">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                </svg>
+                <span>Sign in with Google</span>
+              </button>
+            </div>
+
+            <div id="auth-logged-in" class="auth-state hidden">
+              <div class="user-profile-row">
+                <img id="user-avatar" class="user-avatar" src="" alt="User Avatar">
+                <div class="user-details">
+                  <span id="user-name" class="user-name">User Name</span>
+                  <span id="user-email" class="user-email">user@email.com</span>
+                  <span id="sync-status" class="sync-status">● Cloud Synced</span>
+                </div>
+                <button id="google-logout-btn" class="logout-btn" type="button" title="Sign Out">Sign Out</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-divider"></div>
+
+        <div class="settings-group">
+          <div class="setting-item">
+            <div class="setting-info">
+              <label for="toggle-format-bar" class="setting-label">Floating Format Bar</label>
+              <span class="setting-desc">Show quick formatting toolbar when selecting text</span>
+            </div>
+            <div class="setting-control">
+              <label class="switch">
+                <input type="checkbox" id="toggle-format-bar" checked>
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden Image File Input for Direct Native Explorer -->
+  <input type="file" id="image-file-input" accept="image/*" class="hidden-input">
+
+  <!-- Keyboard Shortcuts Modal Overlay -->
+  <div id="shortcuts-modal" class="modal-backdrop hidden">
+    <div class="modal-card shortcuts-card">
+      <div class="modal-header">
+        <h2>Canvas Shortcuts</h2>
+        <button id="close-modal-btn" class="close-btn" aria-label="Close">&times;</button>
+      </div>
+      <div class="shortcuts-grid">
+        <div class="shortcut-group">
+          <h3>Navigation & Canvas</h3>
+          <div class="shortcut-row"><span>Create note at cursor</span> <kbd>Space</kbd></div>
+          <div class="shortcut-row"><span>Jump to today's canvas</span> <kbd>T</kbd></div>
+          <div class="shortcut-row"><span>Pan canvas</span> <kbd>Left Drag</kbd></div>
+          <div class="shortcut-row"><span>Zoom in / out</span> <kbd>Ctrl</kbd> + <kbd>Wheel</kbd></div>
+          <div class="shortcut-row"><span>Reset viewport</span> <kbd>Ctrl</kbd> + <kbd>0</kbd></div>
+        </div>
+        <div class="shortcut-group">
+          <h3>Drawing Tools</h3>
+          <div class="shortcut-row"><span>Pencil / Freehand</span> <kbd>P</kbd></div>
+          <div class="shortcut-row"><span>Straight line</span> <kbd>L</kbd></div>
+          <div class="shortcut-row"><span>Eraser</span> <kbd>E</kbd></div>
+          <div class="shortcut-row"><span>Select / Pan mode</span> <span class="kbd-inline"><kbd>V</kbd> <kbd>Esc</kbd></span></div>
+          <div class="shortcut-row"><span>Undo stroke</span> <kbd>Ctrl+Z</kbd></div>
+        </div>
+        <div class="shortcut-group">
+          <h3>Note Editing</h3>
+          <div class="shortcut-row"><span>Bold</span> <kbd>Ctrl+B</kbd></div>
+          <div class="shortcut-row"><span>Italic</span> <kbd>Ctrl+I</kbd></div>
+          <div class="shortcut-row"><span>Resize text font</span> <span class="kbd-inline"><kbd>Ctrl+[</kbd> <kbd>Ctrl+]</kbd></span></div>
+          <div class="shortcut-row"><span>Insert checkmark</span> <kbd>\check</kbd></div>
+          <div class="shortcut-row"><span>Insert image</span> <kbd>\img</kbd></div>
+          <div class="shortcut-row"><span>Delete note</span> <span class="kbd-inline"><kbd>Esc</kbd> <kbd>Delete</kbd></span></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <span class="hint-text">Press <kbd>Esc</kbd> or <kbd>?</kbd> anytime to toggle this menu.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating Format Bar for text selection -->
+  <div id="floating-format-bar" class="floating-format-bar hidden">
+    <div class="font-size-stepper">
+      <button type="button" id="btn-font-dec" title="Decrease font size (Ctrl+[)">−</button>
+      <span id="font-size-display" class="font-size-val">15</span>
+      <button type="button" id="btn-font-inc" title="Increase font size (Ctrl+])">+</button>
+    </div>
+    <span class="bar-divider"></span>
+    <button type="button" data-cmd="bold" title="Bold (Ctrl+B)"><b>B</b></button>
+    <button type="button" data-cmd="italic" title="Italic (Ctrl+I)"><i>I</i></button>
+    <button type="button" data-cmd="underline" title="Underline (Ctrl+U)"><u>U</u></button>
+    <span class="bar-divider"></span>
+    <button type="button" data-cmd="insertUnorderedList" title="Bullet List">• List</button>
+    <button type="button" data-cmd="formatBlock" data-val="blockquote" title="Quote">“ Quote</button>
+    <button type="button" data-cmd="formatBlock" data-val="pre" title="Code Block">&lt;/&gt; Code</button>
+  </div>
+
+  <script src="cloudinary.js"></script>
+  <script src="activity.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
