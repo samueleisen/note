@@ -1,15 +1,31 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CustomNote — Minimalist Freeform Canvas</title>
-  <meta name="description" content="A distraction-free, zero-chrome infinite canvas note-taking experience inspired by OneNote.">
+  <title>Sam's Note</title>
+  <meta name="description"
+    content="A distraction-free, zero-chrome infinite canvas note-taking experience inspired by OneNote.">
+
+  <!-- PWA & Mobile Web App Standalone Meta Tags -->
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" href="fav-icon.png">
+  <link rel="apple-touch-icon" href="fav-icon.png">
+  <meta name="theme-color" content="#0d0f17">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="CustomNote">
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+    rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
+
 <body class="theme-dark" spellcheck="false">
   <!-- Infinite Canvas Viewport -->
   <div id="viewport" class="viewport" tabindex="0">
@@ -31,31 +47,36 @@
   <!-- Ambient Drawing Tool Dock (Select, Pencil, Line, Eraser, Undo) -->
   <div id="tool-dock" class="tool-dock">
     <button class="tool-btn active" data-tool="select" title="Select / Pan (V or Esc)" aria-label="Select Tool">
-      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none"
+        stroke-linecap="round" stroke-linejoin="round">
         <path d="M3 3l7 18 3-7 7-3L3 3z"></path>
       </svg>
     </button>
     <button class="tool-btn" data-tool="pencil" title="Pencil / Freehand (P)" aria-label="Pencil Tool">
-      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none"
+        stroke-linecap="round" stroke-linejoin="round">
         <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
       </svg>
     </button>
     <button class="tool-btn" data-tool="line" title="Straight Line (L)" aria-label="Line Tool">
-      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none"
+        stroke-linecap="round" stroke-linejoin="round">
         <line x1="5" y1="19" x2="19" y2="5"></line>
         <circle cx="5" cy="19" r="1.5" fill="currentColor"></circle>
         <circle cx="19" cy="5" r="1.5" fill="currentColor"></circle>
       </svg>
     </button>
     <button class="tool-btn" data-tool="eraser" title="Eraser (E)" aria-label="Eraser Tool">
-      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none"
+        stroke-linecap="round" stroke-linejoin="round">
         <path d="M20 20H7L3 16C2 15 2 13 3 12L13 2L22 11L18 15"></path>
         <path d="M7 16L16 7"></path>
       </svg>
     </button>
     <span class="tool-dock-divider"></span>
     <button class="tool-btn" id="undo-btn" title="Undo Stroke (Ctrl+Z)" aria-label="Undo">
-      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none"
+        stroke-linecap="round" stroke-linejoin="round">
         <polyline points="1 4 1 10 7 10"></polyline>
         <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
       </svg>
@@ -69,18 +90,23 @@
   <!-- ═══ END ACTIVITY RAIL ═══ -->
 
   <!-- Mobile Mode Dot: White (Read Mode) / Dark (Edit Mode, double-tap toggle) -->
-  <div id="mobile-mode-dot" class="mobile-mode-dot" title="Double tap to toggle Edit Mode" aria-label="Mobile Mode Indicator"></div>
+  <div id="mobile-mode-dot" class="mobile-mode-dot" title="Double tap to toggle Edit Mode"
+    aria-label="Mobile Mode Indicator"></div>
 
   <!-- Subtle Ambient HUD in bottom-right (Completely unobtrusive, reveals softly on hover) -->
   <div class="ambient-hud">
     <button id="settings-btn" class="hud-btn" title="Settings" aria-label="Settings">
-      <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"
+        stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="3"></circle>
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        <path
+          d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+        </path>
       </svg>
     </button>
     <button id="shortcuts-help-btn" class="hud-btn" title="Keyboard Shortcuts (?)" aria-label="Keyboard Shortcuts">
-      <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"
+        stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="10"></circle>
         <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
         <line x1="12" y1="17" x2="12.01" y2="17"></line>
@@ -106,10 +132,14 @@
               </div>
               <button id="google-login-btn" class="google-auth-btn" type="button">
                 <svg viewBox="0 0 24 24" width="16" height="16">
-                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
-                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                  <path fill="#4285F4"
+                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                  <path fill="#34A853"
+                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                  <path fill="#FBBC05"
+                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                  <path fill="#EA4335"
+                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
                 </svg>
                 <span>Sign in with Google</span>
               </button>
@@ -173,17 +203,20 @@
           <div class="shortcut-row"><span>Pencil / Freehand</span> <kbd>P</kbd></div>
           <div class="shortcut-row"><span>Straight line</span> <kbd>L</kbd></div>
           <div class="shortcut-row"><span>Eraser</span> <kbd>E</kbd></div>
-          <div class="shortcut-row"><span>Select / Pan mode</span> <span class="kbd-inline"><kbd>V</kbd> <kbd>Esc</kbd></span></div>
+          <div class="shortcut-row"><span>Select / Pan mode</span> <span class="kbd-inline"><kbd>V</kbd>
+              <kbd>Esc</kbd></span></div>
           <div class="shortcut-row"><span>Undo stroke</span> <kbd>Ctrl+Z</kbd></div>
         </div>
         <div class="shortcut-group">
           <h3>Note Editing</h3>
           <div class="shortcut-row"><span>Bold</span> <kbd>Ctrl+B</kbd></div>
           <div class="shortcut-row"><span>Italic</span> <kbd>Ctrl+I</kbd></div>
-          <div class="shortcut-row"><span>Resize text font</span> <span class="kbd-inline"><kbd>Ctrl+[</kbd> <kbd>Ctrl+]</kbd></span></div>
+          <div class="shortcut-row"><span>Resize text font</span> <span class="kbd-inline"><kbd>Ctrl+[</kbd>
+              <kbd>Ctrl+]</kbd></span></div>
           <div class="shortcut-row"><span>Insert checkmark</span> <kbd>\check</kbd></div>
           <div class="shortcut-row"><span>Insert image</span> <kbd>\img</kbd></div>
-          <div class="shortcut-row"><span>Delete note</span> <span class="kbd-inline"><kbd>Esc</kbd> <kbd>Delete</kbd></span></div>
+          <div class="shortcut-row"><span>Delete note</span> <span class="kbd-inline"><kbd>Esc</kbd>
+              <kbd>Delete</kbd></span></div>
         </div>
       </div>
       <div class="modal-footer">
@@ -213,5 +246,17 @@
   <script src="activity.js"></script>
   <script src="mobile.js"></script>
   <script type="module" src="app.js"></script>
+
+  <!-- Service Worker Registration for PWA Standalone Support -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+          .then((reg) => console.log('CustomNote PWA ServiceWorker active:', reg.scope))
+          .catch((err) => console.log('CustomNote ServiceWorker registration failed:', err));
+      });
+    }
+  </script>
 </body>
+
 </html>
