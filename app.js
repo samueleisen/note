@@ -5,6 +5,7 @@ import {
   ref,
   set,
   get,
+  onValue,
   signInWithPopup,
   signOut,
   onAuthStateChanged,
@@ -105,6 +106,7 @@ function getCutoffDateStr() {
   let saveDebounceTimer = null;
   let cloudSaveDebounceTimer = null;
   let isHydratingFromCloud = false;
+  let _activeCloudListener = null; // Unsubscribe handle for the live onValue listener
 
   // ==========================================
   // Coordinate Transformations
@@ -253,7 +255,7 @@ function getCutoffDateStr() {
             </button>
           </div>
         </div>
-        <div class="note-body" contenteditable="${isEditable}" data-placeholder="Type something here...">${noteData.content}</div>
+        <div class="note-body" contenteditable="${isEditable}" spellcheck="false" data-placeholder="Type something here...">${noteData.content}</div>
         <div class="note-resizer" title="Resize note"></div>
       `;
 
@@ -1438,8 +1440,9 @@ function getCutoffDateStr() {
       window.ActivityTracker.refresh();
     }
 
-    // 3. Debounced cloud sync if signed in
-    if (state.currentUser && !isHydratingFromCloud) {
+    // 3. Push to cloud ONLY if we have real content OR if cloud is already empty.
+    // Never push 0 notes to cloud while cloud may have data we haven't loaded yet.
+    if (state.currentUser && !isHydratingFromCloud && notesArray.length > 0) {
       debounceCloudSave(targetDate, workspaceData);
     }
   }
@@ -1590,10 +1593,71 @@ function getCutoffDateStr() {
     updateTransform();
     window.ActivityTracker?.setActiveDate(targetDate);
 
-    // 5. Cloud sync check if user is logged in
+    // 5. Attach real-time cloud listener if user is logged in
     if (state.currentUser) {
-      syncCloudWorkspace(targetDate);
+      attachCloudListener(targetDate);
     }
+  }
+
+  // ==========================================
+  // Cloud-First Real-Time Sync (onValue)
+  // ==========================================
+  function attachCloudListener(dateStr) {
+    // Detach any previous listener
+    if (_activeCloudListener) {
+      _activeCloudListener();
+      _activeCloudListener = null;
+    }
+
+    if (!state.currentUser) return;
+    const uid = state.currentUser.uid;
+    const workspaceRef = ref(database, `users/${uid}/workspaces/${dateStr}`);
+
+    _activeCloudListener = onValue(workspaceRef, (snapshot) => {
+      if (isHydratingFromCloud) return;
+
+      if (snapshot.exists()) {
+        const cloudData = snapshot.val();
+        const cloudNoteCount = Array.isArray(cloudData.notes) ? cloudData.notes.length : 0;
+        const localNoteCount = state.notes.size;
+
+        // Cloud-First: always apply if cloud has more notes, or if cloud is newer
+        const rawLocal = localStorage.getItem(workspaceKey(dateStr));
+        let localData = null;
+        if (rawLocal) { try { localData = JSON.parse(rawLocal); } catch {} }
+        const cloudTime = cloudData.updatedAt || 0;
+        const localTime = localData ? (localData.updatedAt || 0) : 0;
+
+        const cloudWins =
+          cloudNoteCount > localNoteCount ||  // Cloud has more notes → always trust cloud
+          cloudTime > localTime ||             // Cloud is newer → trust cloud
+          !localData;                          // No local cache at all
+
+        if (cloudWins) {
+          const mergedLocal = Object.assign({}, cloudData, {
+            viewport: localData?.viewport || { panX: state.panX, panY: state.panY, scale: state.scale }
+          });
+          localStorage.setItem(workspaceKey(dateStr), JSON.stringify(mergedLocal));
+
+          if (state.activeDate === dateStr) {
+            isHydratingFromCloud = true;
+            applyWorkspaceData(mergedLocal, true);
+            updateTransform();
+            isHydratingFromCloud = false;
+          }
+          window.ActivityTracker?.refresh();
+          updateSyncStatus('synced');
+        }
+      } else {
+        // Cloud has nothing yet — push our local notes if we have any
+        if (state.notes.size > 0 && state.activeDate === dateStr) {
+          saveToStorage(dateStr);
+        }
+      }
+    }, (err) => {
+      console.error('Cloud listener error:', err);
+      updateSyncStatus('error');
+    });
   }
 
   function applyWorkspaceData(workspace, preserveViewport = false) {
@@ -1796,7 +1860,10 @@ function getCutoffDateStr() {
                 }
                 const cloudTime = ws.updatedAt || 0;
                 const localTime = localData ? (localData.updatedAt || 0) : 0;
-                if (cloudTime >= localTime || !localData) {
+                // Cloud-First: always trust cloud if it has more notes or is newer
+                const cloudNoteCount = Array.isArray(ws.notes) ? ws.notes.length : 0;
+                const localNoteCount = Array.isArray(localData?.notes) ? localData.notes.length : 0;
+                if (cloudNoteCount >= localNoteCount || cloudTime >= localTime || !localData) {
                   const mergedLocal = Object.assign({}, ws, {
                     viewport: localData?.viewport || { panX: window.innerWidth / 2 - 200, panY: window.innerHeight / 2 - 150, scale: 1.0 }
                   });
@@ -1806,9 +1873,9 @@ function getCutoffDateStr() {
             }
           }
 
-          // 2. Refresh activity strip and hydrate active canvas
+          // 2. Refresh activity strip and attach real-time live listener for active date
           window.ActivityTracker?.refresh();
-          await syncCloudWorkspace(state.activeDate);
+          attachCloudListener(state.activeDate); // live real-time sync replaces one-shot syncCloudWorkspace
           await pruneExpiredWorkspaces();
           updateSyncStatus('synced');
         } catch (err) {
@@ -1816,6 +1883,11 @@ function getCutoffDateStr() {
           updateSyncStatus('error');
         }
       } else {
+        // Signed out — detach live listener
+        if (_activeCloudListener) {
+          _activeCloudListener();
+          _activeCloudListener = null;
+        }
         updateSyncStatus('offline');
       }
     });
