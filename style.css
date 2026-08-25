@@ -1206,8 +1206,7 @@ kbd {
   .floating-format-bar,
   #shortcuts-help-btn,
   .zoom-badge,
-  .note-resizer,
-  .note-drag-handle {
+  .note-resizer {
     display: none !important;
   }
 
@@ -1249,12 +1248,24 @@ kbd {
     box-shadow: 0 0 0 1.5px var(--accent), 0 0 8px rgba(99, 102, 241, 0.7);
   }
 
-  /* 3. Fullscreen Spread Note Cards */
+  /* 3. Mobile Note Cards (Free placement & touch dragging) */
   .note-card {
-    width: calc(100vw - 32px) !important;
-    max-width: 600px;
+    max-width: calc(100vw - 32px);
     box-sizing: border-box;
     border-radius: var(--radius-md);
+  }
+
+  .note-header {
+    min-height: 20px;
+    cursor: grab;
+    touch-action: none;
+  }
+
+  .note-drag-handle {
+    display: flex !important;
+    padding: 6px 10px;
+    margin-left: -4px;
+    touch-action: none;
   }
 
   /* 4. Read-Only Mode (White Dot Active) */

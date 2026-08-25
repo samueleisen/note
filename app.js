@@ -23,7 +23,6 @@ const DRAG_THRESHOLD = 5; // Pixels to distinguish click vs drag
 // --- State ---
 const state = {
   currentUser: null,
-  mobileEditMode: false, // Mobile: false = Read Mode (⚪), true = Edit Mode (⚫)
   activeDate: getTodayStr(),
   panX: 0,
   panY: 0,
@@ -45,12 +44,14 @@ const state = {
   currentStroke: null,
 };
 
-function isMobileView() {
-  return window.innerWidth <= 768;
-}
-
 function getTodayStr() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function getCutoffDateStr() {
+  const d = new Date();
+  d.setDate(d.getDate() - 98); // 100-day window: (100 - 2) = 98 days ago
+  return d.toISOString().slice(0, 10);
 }
 
   function workspaceKey(dateStr) {
@@ -96,7 +97,6 @@ function getTodayStr() {
   const userName = document.getElementById('user-name');
   const userEmail = document.getElementById('user-email');
   const syncStatus = document.getElementById('sync-status');
-  const mobileModeDot = document.getElementById('mobile-mode-dot');
 
   let targetImageNoteId = null;
   let targetImageRange = null;
@@ -199,17 +199,18 @@ function getTodayStr() {
 
   function createNote(x, y, options = {}) {
     const id = options.id || generateId();
-    const isMobile = isMobileView();
-    const defaultWidth = isMobile ? Math.min(window.innerWidth - 32, 600) : 300;
+    const isMobile = window.MobileManager?.isMobile();
+    const defaultWidth = isMobile ? Math.min(window.innerWidth - 32, 320) : 300;
     const width = options.width || defaultWidth;
-    const noteX = isMobile ? 16 : x;
+    const noteX = Math.round(x);
+    const noteY = Math.round(y);
     const content = options.content || '';
     const zIndex = options.zIndex || ++state.zIndexCounter;
 
     const noteData = {
       id,
       x: noteX,
-      y,
+      y: noteY,
       width,
       content,
       zIndex,
@@ -218,7 +219,7 @@ function getTodayStr() {
     state.notes.set(id, noteData);
     renderNoteElement(noteData);
 
-    if (options.focus !== false && (!isMobile || state.mobileEditMode)) {
+    if (options.focus !== false && (!isMobile || window.MobileManager?.isEditMode())) {
       setTimeout(() => {
         focusNote(id);
       }, 10);
@@ -237,7 +238,7 @@ function getTodayStr() {
       noteEl = document.createElement('div');
       noteEl.id = noteData.id;
       noteEl.className = 'note-card';
-      const isEditable = !isMobileView() || state.mobileEditMode;
+      const isEditable = !window.MobileManager?.isMobile() || window.MobileManager?.isEditMode();
       noteEl.innerHTML = `
         <div class="note-header">
           <div class="note-drag-handle" title="Drag to move note">
@@ -313,7 +314,17 @@ function getTodayStr() {
     hideFloatingFormatBar();
   }
 
-  function deleteNote(id) {
+  function deleteNote(id, isUndoable = true) {
+    const noteData = state.notes.get(id);
+    if (noteData && isUndoable) {
+      const noteEl = document.getElementById(id);
+      if (noteEl) {
+        const bodyEl = noteEl.querySelector('.note-body');
+        if (bodyEl) noteData.content = bodyEl.innerHTML;
+      }
+      state.undoStack.push({ type: 'delete_note', note: { ...noteData } });
+    }
+
     const noteEl = document.getElementById(id);
     if (noteEl) {
       noteEl.remove();
@@ -344,7 +355,7 @@ function getTodayStr() {
 
     // Focus & Selection
     noteEl.addEventListener('mousedown', (e) => {
-      if (isMobileView() && !state.mobileEditMode) {
+      if (window.MobileManager?.isMobile() && !window.MobileManager?.isEditMode()) {
         return; // Allow selecting text in read-only mode without active focus ring
       }
       e.stopPropagation();
@@ -356,25 +367,21 @@ function getTodayStr() {
       setActiveNote(id);
     });
 
-    // --- Drag Note ---
-    headerEl.addEventListener('mousedown', (e) => {
-      if (e.button !== 0 || e.target.closest('.note-actions')) return;
-      e.preventDefault();
-      e.stopPropagation();
-
+    // --- Drag Note (Mouse + Touch Support) ---
+    function startDraggingNote(clientX, clientY) {
       const noteData = state.notes.get(id);
       if (!noteData) return;
 
-      const startMouseX = e.clientX;
-      const startMouseY = e.clientY;
+      const startMouseX = clientX;
+      const startMouseY = clientY;
       const startX = noteData.x;
       const startY = noteData.y;
 
       document.body.style.cursor = 'grabbing';
 
-      function onMouseMove(moveEvent) {
-        const dx = (moveEvent.clientX - startMouseX) / state.scale;
-        const dy = (moveEvent.clientY - startMouseY) / state.scale;
+      function onMove(currentX, currentY) {
+        const dx = (currentX - startMouseX) / state.scale;
+        const dy = (currentY - startMouseY) / state.scale;
 
         noteData.x = Math.round(startX + dx);
         noteData.y = Math.round(startY + dy);
@@ -382,16 +389,47 @@ function getTodayStr() {
         noteEl.style.top = `${noteData.y}px`;
       }
 
-      function onMouseUp() {
+      function onMouseMove(moveEvent) {
+        onMove(moveEvent.clientX, moveEvent.clientY);
+      }
+
+      function onTouchMove(moveEvent) {
+        if (moveEvent.touches && moveEvent.touches[0]) {
+          if (moveEvent.cancelable) moveEvent.preventDefault();
+          onMove(moveEvent.touches[0].clientX, moveEvent.touches[0].clientY);
+        }
+      }
+
+      function onEnd() {
         document.body.style.cursor = '';
         window.removeEventListener('mousemove', onMouseMove);
-        window.removeEventListener('mouseup', onMouseUp);
+        window.removeEventListener('mouseup', onEnd);
+        window.removeEventListener('touchmove', onTouchMove);
+        window.removeEventListener('touchend', onEnd);
         debounceSave();
       }
 
       window.addEventListener('mousemove', onMouseMove);
-      window.addEventListener('mouseup', onMouseUp);
+      window.addEventListener('mouseup', onEnd);
+      window.addEventListener('touchmove', onTouchMove, { passive: false });
+      window.addEventListener('touchend', onEnd);
+    }
+
+    headerEl.addEventListener('mousedown', (e) => {
+      if (e.button !== 0 || e.target.closest('.note-actions')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      startDraggingNote(e.clientX, e.clientY);
     });
+
+    headerEl.addEventListener('touchstart', (e) => {
+      if (e.target.closest('.note-actions')) return;
+      if (e.touches && e.touches.length === 1) {
+        e.stopPropagation();
+        const touch = e.touches[0];
+        startDraggingNote(touch.clientX, touch.clientY);
+      }
+    }, { passive: false });
 
     // --- Resize Note ---
     resizerEl.addEventListener('mousedown', (e) => {
@@ -983,6 +1021,12 @@ function getTodayStr() {
     } else if (action.type === 'erase') {
       state.drawings.push(action.stroke);
       renderStrokeElement(action.stroke);
+    } else if (action.type === 'delete_note') {
+      const noteData = action.note;
+      state.notes.set(noteData.id, noteData);
+      renderNoteElement(noteData);
+      window.ActivityTracker?.logNoteCreated(state.activeDate);
+      setTimeout(() => focusNote(noteData.id), 10);
     }
     debounceSave();
   }
@@ -1124,10 +1168,6 @@ function getTodayStr() {
       stopPanning();
     }
     if (isPointerDownOnCanvas) {
-      const dist = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y);
-      if (dist <= DRAG_THRESHOLD && isMobileView()) {
-        handleCanvasTapMobile(e);
-      }
       isPointerDownOnCanvas = false;
     }
   });
@@ -1429,6 +1469,67 @@ function getTodayStr() {
     }, 600);
   }
 
+  function switchToDate(dateStr) {
+    if (!dateStr || state.activeDate === dateStr) return;
+    clearTimeout(saveDebounceTimer);
+    clearTimeout(cloudSaveDebounceTimer);
+    saveToStorage(state.activeDate);
+    loadFromStorage(dateStr);
+  }
+
+  // ==========================================
+  // Automatic 100-Day Expiration & Pruning
+  // ==========================================
+  async function pruneExpiredWorkspaces() {
+    const cutoffDate = getCutoffDateStr();
+
+    // 1. Purge from LocalStorage
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('customnote_workspace_')) {
+        const dateStr = key.replace('customnote_workspace_', '');
+        if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr) && dateStr < cutoffDate) {
+          keysToRemove.push(key);
+        }
+      }
+    }
+    keysToRemove.forEach((k) => localStorage.removeItem(k));
+
+    // 2. Purge from Firebase Realtime Database if signed in
+    if (state.currentUser) {
+      const uid = state.currentUser.uid;
+      try {
+        const workspacesRef = ref(database, `users/${uid}/workspaces`);
+        const snapshot = await get(workspacesRef);
+        if (snapshot.exists()) {
+          const cloudWorkspaces = snapshot.val();
+          for (const dateKey of Object.keys(cloudWorkspaces)) {
+            if (/^\d{4}-\d{2}-\d{2}$/.test(dateKey) && dateKey < cutoffDate) {
+              const expiredRef = ref(database, `users/${uid}/workspaces/${dateKey}`);
+              await set(expiredRef, null); // Deletes expired node from Firebase
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Error pruning expired cloud workspaces:', err);
+      }
+    }
+
+    if (keysToRemove.length > 0 && window.ActivityTracker) {
+      window.ActivityTracker.refresh();
+    }
+  }
+
+  function createDefaultWelcomeNotes() {
+    const cx = window.innerWidth / 2 - 150;
+    const cy = window.innerHeight / 2 - 100;
+    createNote(cx, cy, {
+      content: '<div>Welcome to <b>CustomNote</b>!</div><div><br></div><div>Double-click or press <b>Space</b> to create a new thought.</div>',
+      focus: false,
+    });
+  }
+
   function loadFromStorage(dateStr) {
     const targetDate = dateStr || state.activeDate || getTodayStr();
     state.activeDate = targetDate;
@@ -1446,27 +1547,10 @@ function getTodayStr() {
       toggleFormatBarInput.checked = state.settings.showFormatBar !== false;
     }
 
-    // 2. Migration for legacy single-canvas keys
-    const todayStr = getTodayStr();
-    if (targetDate === todayStr && !localStorage.getItem(workspaceKey(todayStr))) {
-      const legacyNotes = localStorage.getItem(STORAGE_KEY_NOTES);
-      const legacyDrawings = localStorage.getItem(STORAGE_KEY_DRAWINGS);
-      const legacyView = localStorage.getItem(STORAGE_KEY_VIEW);
-      if (legacyNotes || legacyDrawings || legacyView) {
-        try {
-          const migratedData = {
-            date: todayStr,
-            notes: legacyNotes ? JSON.parse(legacyNotes) : [],
-            drawings: legacyDrawings ? JSON.parse(legacyDrawings) : [],
-            viewport: legacyView ? JSON.parse(legacyView) : { panX: window.innerWidth / 2 - 200, panY: window.innerHeight / 2 - 150, scale: 1.0 },
-            updatedAt: Date.now(),
-          };
-          localStorage.setItem(workspaceKey(todayStr), JSON.stringify(migratedData));
-        } catch (err) {
-          console.error('Error migrating legacy workspace', err);
-        }
-      }
-    }
+    // 2. Clean up legacy single-canvas keys
+    localStorage.removeItem(STORAGE_KEY_NOTES);
+    localStorage.removeItem(STORAGE_KEY_DRAWINGS);
+    localStorage.removeItem(STORAGE_KEY_VIEW);
 
     // 3. Clear current canvas DOM & state
     notesLayer.innerHTML = '';
@@ -1497,8 +1581,9 @@ function getTodayStr() {
       state.scale = 1.0;
 
       // Welcome notes only if first ever visit on today and not logged in
+      const todayStr = getTodayStr();
       if (targetDate === todayStr && !hasAnyWorkspaces() && !state.currentUser) {
-        initWelcomeNotes();
+        createDefaultWelcomeNotes();
       }
     }
 
@@ -1532,7 +1617,7 @@ function getTodayStr() {
       renderAllDrawings();
     }
 
-    // Notes
+    // Notes (Direct instantiation without debounce saving side-effects)
     notesLayer.innerHTML = '';
     state.notes.clear();
     state.activeNoteId = null;
@@ -1542,13 +1627,16 @@ function getTodayStr() {
       let maxZ = 10;
       workspace.notes.forEach((note) => {
         maxZ = Math.max(maxZ, note.zIndex || 10);
-        createNote(note.x, note.y, {
-          id: note.id,
-          width: note.width,
-          content: note.content,
-          zIndex: note.zIndex,
-          focus: false,
-        });
+        const noteData = {
+          id: note.id || generateId(),
+          x: typeof note.x === 'number' ? note.x : 100,
+          y: typeof note.y === 'number' ? note.y : 100,
+          width: typeof note.width === 'number' ? note.width : 300,
+          content: note.content || '',
+          zIndex: note.zIndex || 10,
+        };
+        state.notes.set(noteData.id, noteData);
+        renderNoteElement(noteData);
       });
       state.zIndexCounter = maxZ;
     }
@@ -1609,29 +1697,6 @@ function getTodayStr() {
       console.error('Cloud sync error for date ' + dateStr, err);
       updateSyncStatus('error');
     }
-  }
-
-  function switchToDate(dateStr) {
-    if (!dateStr || dateStr === state.activeDate) return;
-    saveToStorage(); // Flush current workspace (local + cloud)
-    loadFromStorage(dateStr); // Load target workspace
-  }
-
-  function initWelcomeNotes() {
-    const centerX = 50;
-    const centerY = 40;
-
-    createNote(centerX, centerY, {
-      width: 320,
-      content: `<h2>✨ Welcome to CustomNote</h2><p>A pure, distraction-free canvas for your thoughts.</p><ul><li><b>Click anywhere</b> to start typing</li><li><b>Drag top bar</b> to move notes</li><li><b>Space + Drag</b> to pan canvas</li><li><b>Ctrl + Wheel</b> to zoom in/out</li></ul>`,
-      focus: false,
-    });
-
-    createNote(centerX + 360, centerY, {
-      width: 280,
-      content: `<h3>📝 Quick Tasks</h3><div class="todo-row"><input type="checkbox" class="todo-checkbox"><span class="todo-text">Try clicking anywhere</span></div><div class="todo-row"><input type="checkbox" class="todo-checkbox" checked><span class="todo-text">Test zoom & pan</span></div><div class="todo-row"><input type="checkbox" class="todo-checkbox"><span class="todo-text">Press <code>?</code> for all shortcuts</span></div>`,
-      focus: false,
-    });
   }
 
   // ==========================================
@@ -1744,6 +1809,7 @@ function getTodayStr() {
           // 2. Refresh activity strip and hydrate active canvas
           window.ActivityTracker?.refresh();
           await syncCloudWorkspace(state.activeDate);
+          await pruneExpiredWorkspaces();
           updateSyncStatus('synced');
         } catch (err) {
           console.error('Initial user cloud hydration error:', err);
@@ -1778,123 +1844,32 @@ function getTodayStr() {
   }
 
   // ==========================================
-  // Mobile Zen Mode (Double-Tap Screen Toggle & Dot Indicator)
-  // ==========================================
-  let lastCanvasTapTime = 0;
-  let lastCanvasTapPos = { x: 0, y: 0 };
-  let mobileSingleTapTimer = null;
-
-  function handleCanvasTapMobile(e) {
-    if (!isMobileView()) return;
-
-    // Ignore taps inside existing notes, modals, or HUD elements
-    if (
-      e.target.closest('.note-card') ||
-      e.target.closest('.modal-card') ||
-      e.target.closest('.ambient-hud')
-    ) {
-      return;
-    }
-
-    const now = Date.now();
-    const timeSinceLast = now - lastCanvasTapTime;
-    const dist = Math.hypot(e.clientX - lastCanvasTapPos.x, e.clientY - lastCanvasTapPos.y);
-
-    if (timeSinceLast < 340 && dist < 45) {
-      // --- DOUBLE TAP ANYWHERE ON SCREEN ---
-      clearTimeout(mobileSingleTapTimer);
-      mobileSingleTapTimer = null;
-      lastCanvasTapTime = 0;
-      toggleMobileMode();
-    } else {
-      // --- FIRST TAP ---
-      lastCanvasTapTime = now;
-      lastCanvasTapPos = { x: e.clientX, y: e.clientY };
-
-      if (state.mobileEditMode) {
-        // In Edit Mode: wait 260ms before creating note to ensure user isn't double-tapping
-        clearTimeout(mobileSingleTapTimer);
-        const tapClientX = e.clientX;
-        const tapClientY = e.clientY;
-        mobileSingleTapTimer = setTimeout(() => {
-          if (isMobileView() && state.mobileEditMode) {
-            const worldPos = screenToWorld(tapClientX, tapClientY);
-            const noteWidth = Math.min(window.innerWidth - 32, 600);
-            createNote(16, Math.round(worldPos.y), { width: noteWidth });
-          }
-          mobileSingleTapTimer = null;
-        }, 260);
-      }
-    }
-  }
-
-  function handleDotTap(e) {
-    if (e) {
-      e.stopPropagation();
-      e.preventDefault();
-    }
-    // Tapping or double tapping the dot toggles mode immediately
-    toggleMobileMode();
-  }
-
-  function toggleMobileMode(forceMode) {
-    state.mobileEditMode = typeof forceMode === 'boolean' ? forceMode : !state.mobileEditMode;
-
-    if (mobileModeDot) {
-      mobileModeDot.classList.toggle('edit-mode', state.mobileEditMode);
-      mobileModeDot.setAttribute(
-        'title',
-        state.mobileEditMode ? 'Edit Mode (Double-tap anywhere to lock)' : 'Read Mode (Double-tap anywhere to edit)'
-      );
-    }
-
-    document.body.classList.toggle('mobile-read-mode', !state.mobileEditMode);
-
-    // Toggle contenteditable for all notes on mobile
-    document.querySelectorAll('.note-body').forEach((bodyEl) => {
-      if (!isMobileView()) {
-        bodyEl.setAttribute('contenteditable', 'true');
-      } else {
-        bodyEl.setAttribute('contenteditable', state.mobileEditMode ? 'true' : 'false');
-      }
-    });
-
-    if (!state.mobileEditMode) {
-      clearActiveNote();
-      document.activeElement?.blur();
-    }
-  }
-
-  if (mobileModeDot) {
-    mobileModeDot.addEventListener('click', handleDotTap);
-    mobileModeDot.addEventListener('touchend', handleDotTap);
-  }
-
-  // ==========================================
   // Initialization
   // ==========================================
   function init() {
     loadFromStorage(getTodayStr());
     setupAuth();
-
-    if (isMobileView()) {
-      toggleMobileMode(false); // Start in Read Mode with white dot
-    }
+    pruneExpiredWorkspaces();
 
     // Activity Tracker mount with date select callback
     window.ActivityTracker?.mount((selectedDate) => {
-      if (!isMobileView()) {
+      if (!window.MobileManager?.isMobile()) {
         switchToDate(selectedDate);
       }
     });
 
-    window.addEventListener('resize', () => {
-      if (isMobileView()) {
-        toggleMobileMode(state.mobileEditMode);
-      } else {
-        document.body.classList.remove('mobile-read-mode');
-        document.querySelectorAll('.note-body').forEach((b) => b.setAttribute('contenteditable', 'true'));
-      }
+    // Initialize Mobile Manager
+    window.MobileManager?.init({
+      createNote: (x, y, opts) => createNote(x, y, opts),
+      panBy: (dx, dy) => {
+        state.panX += dx;
+        state.panY += dy;
+        updateTransform();
+      },
+      zoomAt: (x, y, factor) => zoomAt(x, y, factor),
+      screenToWorld: (x, y) => screenToWorld(x, y),
+      saveState: () => debounceSave(),
+      clearActiveNote: () => clearActiveNote(),
     });
   }
 
