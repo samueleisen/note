@@ -166,7 +166,6 @@ window.MobileManager = (() => {
 
     if (_touchState.isPanning) {
       _touchState.isPanning = false;
-      _callbacks.saveState();
     }
 
     if (e.touches.length === 0) {

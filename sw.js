@@ -1,5 +1,5 @@
 // sw.js — CustomNote Service Worker
-const CACHE_NAME = 'customnote-cache-v1';
+const CACHE_NAME = 'customnote-cache-v2';
 const ASSETS = [
   './',
   './index.html',

@@ -107,6 +107,9 @@ function getCutoffDateStr() {
   let cloudSaveDebounceTimer = null;
   let isHydratingFromCloud = false;
   let _activeCloudListener = null; // Unsubscribe handle for the live onValue listener
+  let lastContentSignature = '';
+  let pendingCloudPayload = null;
+  let pendingCloudDate = null;
 
   // ==========================================
   // Coordinate Transformations
@@ -128,7 +131,6 @@ function getCutoffDateStr() {
   function updateTransform() {
     canvasWorld.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.scale})`;
     renderGrid();
-    debounceSave();
   }
 
   function showZoomBadge() {
@@ -1183,7 +1185,6 @@ function getCutoffDateStr() {
   function stopPanning() {
     state.isPanning = false;
     viewport.classList.remove('panning');
-    debounceSave();
   }
 
   // Wheel Zoom & Pan
@@ -1404,10 +1405,35 @@ function getCutoffDateStr() {
 
   function debounceSave() {
     clearTimeout(saveDebounceTimer);
-    saveDebounceTimer = setTimeout(saveToStorage, 300);
+    saveDebounceTimer = setTimeout(() => {
+      saveDebounceTimer = null;
+      saveToStorage();
+    }, 300);
   }
 
-  function saveToStorage(dateStr) {
+  function flushPendingSaves() {
+    if (saveDebounceTimer) {
+      clearTimeout(saveDebounceTimer);
+      saveDebounceTimer = null;
+      saveToStorage(state.activeDate);
+    }
+    if (cloudSaveDebounceTimer && pendingCloudPayload && pendingCloudDate && state.currentUser) {
+      clearTimeout(cloudSaveDebounceTimer);
+      cloudSaveDebounceTimer = null;
+      const uid = state.currentUser.uid;
+      const targetDate = pendingCloudDate;
+      const payload = pendingCloudPayload;
+      pendingCloudPayload = null;
+      pendingCloudDate = null;
+      const workspaceRef = ref(database, `users/${uid}/workspaces/${targetDate}`);
+      set(workspaceRef, payload).catch((err) => {
+        console.error('Flush cloud save error:', err);
+      });
+      updateSyncStatus('synced');
+    }
+  }
+
+  function saveToStorage(dateStr, forceCloud = false) {
     const targetDate = dateStr || state.activeDate || getTodayStr();
     const notesArray = Array.from(state.notes.values()).map((note) => ({
       id: note.id,
@@ -1418,18 +1444,33 @@ function getCutoffDateStr() {
       zIndex: note.zIndex,
     }));
 
-    const viewportData = {
-      panX: state.panX,
-      panY: state.panY,
-      scale: state.scale,
-    };
+    const currentSignature = JSON.stringify({
+      notes: notesArray,
+      drawings: state.drawings || [],
+    });
+
+    const isDirty = forceCloud || (currentSignature !== lastContentSignature);
+
+    let updatedAt = Date.now();
+    if (!isDirty) {
+      const rawLocal = localStorage.getItem(workspaceKey(targetDate));
+      if (rawLocal) {
+        try {
+          const parsed = JSON.parse(rawLocal);
+          if (parsed && typeof parsed.updatedAt === 'number') {
+            updatedAt = parsed.updatedAt;
+          }
+        } catch {}
+      }
+    } else {
+      lastContentSignature = currentSignature;
+    }
 
     const workspaceData = {
       date: targetDate,
       notes: notesArray,
       drawings: state.drawings,
-      viewport: viewportData,
-      updatedAt: Date.now(),
+      updatedAt: updatedAt,
     };
 
     // 1. Instant local write
@@ -1440,9 +1481,8 @@ function getCutoffDateStr() {
       window.ActivityTracker.refresh();
     }
 
-    // 3. Push to cloud ONLY if we have real content OR if cloud is already empty.
-    // Never push 0 notes to cloud while cloud may have data we haven't loaded yet.
-    if (state.currentUser && !isHydratingFromCloud && notesArray.length > 0) {
+    // 3. Push to cloud if user is signed in, not hydrating from cloud, and content actually changed
+    if (state.currentUser && !isHydratingFromCloud && isDirty) {
       debounceCloudSave(targetDate, workspaceData);
     }
   }
@@ -1450,20 +1490,25 @@ function getCutoffDateStr() {
   function debounceCloudSave(dateStr, workspaceData) {
     if (!state.currentUser) return;
     updateSyncStatus('syncing');
+    pendingCloudDate = dateStr;
+    pendingCloudPayload = {
+      date: dateStr,
+      notes: workspaceData.notes || [],
+      drawings: workspaceData.drawings || [],
+      updatedAt: workspaceData.updatedAt || Date.now(),
+    };
     clearTimeout(cloudSaveDebounceTimer);
     cloudSaveDebounceTimer = setTimeout(async () => {
-      if (!state.currentUser) return;
+      if (!state.currentUser || !pendingCloudPayload) return;
       const uid = state.currentUser.uid;
+      const payloadToSend = pendingCloudPayload;
+      const targetDateToSend = pendingCloudDate;
+      pendingCloudPayload = null;
+      pendingCloudDate = null;
+      cloudSaveDebounceTimer = null;
       try {
-        const workspaceRef = ref(database, `users/${uid}/workspaces/${dateStr}`);
-        // Only save notes, drawings, and updatedAt to Firebase (viewport is local-only)
-        const cloudPayload = {
-          date: dateStr,
-          notes: workspaceData.notes || [],
-          drawings: workspaceData.drawings || [],
-          updatedAt: workspaceData.updatedAt || Date.now(),
-        };
-        await set(workspaceRef, cloudPayload);
+        const workspaceRef = ref(database, `users/${uid}/workspaces/${targetDateToSend}`);
+        await set(workspaceRef, payloadToSend);
         updateSyncStatus('synced');
       } catch (err) {
         console.error('Firebase cloud save error:', err);
@@ -1474,9 +1519,7 @@ function getCutoffDateStr() {
 
   function switchToDate(dateStr) {
     if (!dateStr || state.activeDate === dateStr) return;
-    clearTimeout(saveDebounceTimer);
-    clearTimeout(cloudSaveDebounceTimer);
-    saveToStorage(state.activeDate);
+    flushPendingSaves();
     loadFromStorage(dateStr);
   }
 
@@ -1564,7 +1607,12 @@ function getCutoffDateStr() {
     state.undoStack = [];
     if (drawingsLayer) drawingsLayer.innerHTML = '';
 
-    // 4. Load local workspace first (instant response)
+    // 4. Default canvas position
+    state.panX = window.innerWidth / 2 - 200;
+    state.panY = window.innerHeight / 2 - 150;
+    state.scale = 1.0;
+
+    // 5. Load local workspace first (instant response)
     const rawWorkspace = localStorage.getItem(workspaceKey(targetDate));
     let workspace = null;
     if (rawWorkspace) {
@@ -1577,12 +1625,12 @@ function getCutoffDateStr() {
 
     if (workspace) {
       applyWorkspaceData(workspace);
+      lastContentSignature = JSON.stringify({
+        notes: workspace.notes || [],
+        drawings: workspace.drawings || [],
+      });
     } else {
-      // Empty fresh canvas for this date
-      state.panX = window.innerWidth / 2 - 200;
-      state.panY = window.innerHeight / 2 - 150;
-      state.scale = 1.0;
-
+      lastContentSignature = JSON.stringify({ notes: [], drawings: [] });
       // Welcome notes only if first ever visit on today and not logged in
       const todayStr = getTodayStr();
       if (targetDate === todayStr && !hasAnyWorkspaces() && !state.currentUser) {
@@ -1593,14 +1641,14 @@ function getCutoffDateStr() {
     updateTransform();
     window.ActivityTracker?.setActiveDate(targetDate);
 
-    // 5. Attach real-time cloud listener if user is logged in
+    // 6. Attach real-time cloud listener if user is logged in
     if (state.currentUser) {
       attachCloudListener(targetDate);
     }
   }
 
   // ==========================================
-  // Cloud-First Real-Time Sync (onValue)
+  // Cloud Real-Time Sync (onValue)
   // ==========================================
   function attachCloudListener(dateStr) {
     // Detach any previous listener
@@ -1618,40 +1666,55 @@ function getCutoffDateStr() {
 
       if (snapshot.exists()) {
         const cloudData = snapshot.val();
-        const cloudNoteCount = Array.isArray(cloudData.notes) ? cloudData.notes.length : 0;
-        const localNoteCount = state.notes.size;
-
-        // Cloud-First: always apply if cloud has more notes, or if cloud is newer
         const rawLocal = localStorage.getItem(workspaceKey(dateStr));
         let localData = null;
-        if (rawLocal) { try { localData = JSON.parse(rawLocal); } catch {} }
+        if (rawLocal) {
+          try { localData = JSON.parse(rawLocal); } catch {}
+        }
         const cloudTime = cloudData.updatedAt || 0;
         const localTime = localData ? (localData.updatedAt || 0) : 0;
 
-        const cloudWins =
-          cloudNoteCount > localNoteCount ||  // Cloud has more notes → always trust cloud
-          cloudTime > localTime ||             // Cloud is newer → trust cloud
-          !localData;                          // No local cache at all
+        // Strict timestamp resolution: cloud wins if newer or if no local cache exists
+        const cloudWins = cloudTime > localTime || !localData;
 
         if (cloudWins) {
-          const mergedLocal = Object.assign({}, cloudData, {
-            viewport: localData?.viewport || { panX: state.panX, panY: state.panY, scale: state.scale }
-          });
+          // Cancel any pending local save debounce timers so they don't overwrite cloud state
+          clearTimeout(saveDebounceTimer);
+          clearTimeout(cloudSaveDebounceTimer);
+          saveDebounceTimer = null;
+          cloudSaveDebounceTimer = null;
+          pendingCloudPayload = null;
+          pendingCloudDate = null;
+
+          const mergedLocal = {
+            date: dateStr,
+            notes: cloudData.notes || [],
+            drawings: cloudData.drawings || [],
+            updatedAt: cloudTime,
+          };
           localStorage.setItem(workspaceKey(dateStr), JSON.stringify(mergedLocal));
 
           if (state.activeDate === dateStr) {
             isHydratingFromCloud = true;
-            applyWorkspaceData(mergedLocal, true);
+            applyWorkspaceData(mergedLocal);
+            // Mark content signature in sync with cloud data
+            lastContentSignature = JSON.stringify({
+              notes: mergedLocal.notes,
+              drawings: mergedLocal.drawings,
+            });
             updateTransform();
+            // Clear any timer that might have been queued by DOM events
+            clearTimeout(saveDebounceTimer);
+            saveDebounceTimer = null;
             isHydratingFromCloud = false;
           }
           window.ActivityTracker?.refresh();
           updateSyncStatus('synced');
         }
       } else {
-        // Cloud has nothing yet — push our local notes if we have any
+        // Cloud has nothing yet for this date — if local has notes, push them up
         if (state.notes.size > 0 && state.activeDate === dateStr) {
-          saveToStorage(dateStr);
+          saveToStorage(dateStr, true);
         }
       }
     }, (err) => {
@@ -1660,17 +1723,8 @@ function getCutoffDateStr() {
     });
   }
 
-  function applyWorkspaceData(workspace, preserveViewport = false) {
+  function applyWorkspaceData(workspace) {
     if (!workspace) return;
-
-    // Viewport (only set if not preserving current device's viewport)
-    if (!preserveViewport && workspace.viewport) {
-      state.panX = typeof workspace.viewport.panX === 'number' ? workspace.viewport.panX : 0;
-      state.panY = typeof workspace.viewport.panY === 'number' ? workspace.viewport.panY : 0;
-      state.scale = typeof workspace.viewport.scale === 'number'
-        ? Math.min(MAX_SCALE, Math.max(MIN_SCALE, workspace.viewport.scale))
-        : 1.0;
-    }
 
     // Drawings
     if (Array.isArray(workspace.drawings)) {
@@ -1703,63 +1757,6 @@ function getCutoffDateStr() {
         renderNoteElement(noteData);
       });
       state.zIndexCounter = maxZ;
-    }
-  }
-
-  async function syncCloudWorkspace(dateStr) {
-    if (!state.currentUser) return;
-    const uid = state.currentUser.uid;
-    try {
-      const workspaceRef = ref(database, `users/${uid}/workspaces/${dateStr}`);
-      const snapshot = await get(workspaceRef);
-
-      if (snapshot.exists()) {
-        const cloudData = snapshot.val();
-        const rawLocal = localStorage.getItem(workspaceKey(dateStr));
-        let localData = null;
-        if (rawLocal) {
-          try { localData = JSON.parse(rawLocal); } catch {}
-        }
-
-        const cloudTime = cloudData.updatedAt || 0;
-        const localTime = localData ? (localData.updatedAt || 0) : 0;
-
-        // If cloud is newer or local is empty, update local & render
-        if (cloudTime > localTime || !localData) {
-          const mergedLocal = Object.assign({}, cloudData, {
-            viewport: localData?.viewport || { panX: window.innerWidth / 2 - 200, panY: window.innerHeight / 2 - 150, scale: 1.0 }
-          });
-          localStorage.setItem(workspaceKey(dateStr), JSON.stringify(mergedLocal));
-
-          if (state.activeDate === dateStr) {
-            isHydratingFromCloud = true;
-            applyWorkspaceData(mergedLocal, true); // Preserve device viewport
-            updateTransform();
-            isHydratingFromCloud = false;
-          }
-          if (window.ActivityTracker) {
-            window.ActivityTracker.refresh();
-          }
-        } else if (localTime > cloudTime && localData) {
-          // Local is newer: push to cloud
-          debounceCloudSave(dateStr, localData);
-        }
-        updateSyncStatus('synced');
-      } else {
-        // Cloud has no workspace for this date yet. If local has notes, push local to cloud!
-        const rawLocal = localStorage.getItem(workspaceKey(dateStr));
-        if (rawLocal) {
-          try {
-            const localData = JSON.parse(rawLocal);
-            if (localData && localData.notes && localData.notes.length > 0) {
-              debounceCloudSave(dateStr, localData);
-            }
-          } catch {}
-        }
-      }
-    } catch (err) {
-      console.error('Cloud sync error for date ' + dateStr, err);
-      updateSyncStatus('error');
     }
   }
 
@@ -1860,13 +1857,14 @@ function getCutoffDateStr() {
                 }
                 const cloudTime = ws.updatedAt || 0;
                 const localTime = localData ? (localData.updatedAt || 0) : 0;
-                // Cloud-First: always trust cloud if it has more notes or is newer
-                const cloudNoteCount = Array.isArray(ws.notes) ? ws.notes.length : 0;
-                const localNoteCount = Array.isArray(localData?.notes) ? localData.notes.length : 0;
-                if (cloudNoteCount >= localNoteCount || cloudTime >= localTime || !localData) {
-                  const mergedLocal = Object.assign({}, ws, {
-                    viewport: localData?.viewport || { panX: window.innerWidth / 2 - 200, panY: window.innerHeight / 2 - 150, scale: 1.0 }
-                  });
+                // Strict timestamp comparison
+                if (cloudTime >= localTime || !localData) {
+                  const mergedLocal = {
+                    date: dateKey,
+                    notes: ws.notes || [],
+                    drawings: ws.drawings || [],
+                    updatedAt: cloudTime,
+                  };
                   localStorage.setItem(workspaceKey(dateKey), JSON.stringify(mergedLocal));
                 }
               }
@@ -1875,7 +1873,26 @@ function getCutoffDateStr() {
 
           // 2. Refresh activity strip and attach real-time live listener for active date
           window.ActivityTracker?.refresh();
-          attachCloudListener(state.activeDate); // live real-time sync replaces one-shot syncCloudWorkspace
+          // Load active date data if cloud updated it
+          const rawActive = localStorage.getItem(workspaceKey(state.activeDate));
+          if (rawActive) {
+            try {
+              const activeWs = JSON.parse(rawActive);
+              if (activeWs) {
+                isHydratingFromCloud = true;
+                applyWorkspaceData(activeWs);
+                lastContentSignature = JSON.stringify({
+                  notes: activeWs.notes || [],
+                  drawings: activeWs.drawings || [],
+                });
+                updateTransform();
+                clearTimeout(saveDebounceTimer);
+                saveDebounceTimer = null;
+                isHydratingFromCloud = false;
+              }
+            } catch {}
+          }
+          attachCloudListener(state.activeDate);
           await pruneExpiredWorkspaces();
           updateSyncStatus('synced');
         } catch (err) {
@@ -1914,6 +1931,21 @@ function getCutoffDateStr() {
       authLoggedIn.classList.add('hidden');
     }
   }
+
+  // ==========================================
+  // Lifecycle Save Flushing (PWA Minimize & Backgrounding)
+  // ==========================================
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      flushPendingSaves();
+    }
+  });
+  window.addEventListener('pagehide', () => {
+    flushPendingSaves();
+  });
+  window.addEventListener('beforeunload', () => {
+    flushPendingSaves();
+  });
 
   // ==========================================
   // Initialization
