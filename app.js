@@ -34,13 +34,16 @@ const state = {
   notes: new Map(), // id -> note data object
   activeNoteId: null,
   selectedNoteId: null,
+  selectedNoteIds: new Set(), // Set of note IDs in multi-selection
+  selectedStrokeIds: new Set(), // Set of stroke IDs in multi-selection
+  clipboard: null, // { notes: [...], drawings: [...] }
   zIndexCounter: 10,
   isPanning: false,
   panStart: { x: 0, y: 0 },
   spacePressed: false,
   activeTool: 'select', // 'select' | 'pencil' | 'line' | 'eraser'
   drawings: [], // Array of stroke objects: { id, type, d, points, x1, y1, x2, y2, color, strokeWidth }
-  undoStack: [], // Array of undo actions: { type: 'add'|'erase', stroke }
+  undoStack: [], // Array of undo actions: { type: 'add'|'erase'|'delete_note'|'delete_group', ... }
   isDrawing: false,
   currentStroke: null,
 };
@@ -55,9 +58,72 @@ function getCutoffDateStr() {
   return d.toISOString().slice(0, 10);
 }
 
-  function workspaceKey(dateStr) {
-    return `customnote_workspace_${dateStr}`;
+// Convert 'YYYY-MM-DD' (e.g. '2026-08-27') to short hash '0827'
+function dateToShortHash(dateStr) {
+  if (!dateStr || typeof dateStr !== 'string') return '';
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    return `${parts[1]}${parts[2]}`;
   }
+  return dateStr;
+}
+
+// Convert '#0827' or '0827' or '2026-08-27' to 'YYYY-MM-DD'
+function shortHashToDate(hashStr) {
+  if (!hashStr || typeof hashStr !== 'string') return null;
+  const clean = hashStr.replace(/^#/, '').trim();
+  if (!clean) return null;
+
+  // Full format: YYYY-MM-DD (e.g. 2026-08-27)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+    return clean;
+  }
+
+  // Dash short format: MM-DD (e.g. 08-27)
+  if (/^\d{2}-\d{2}$/.test(clean)) {
+    const [m, d] = clean.split('-');
+    return resolveYearForMonthDay(parseInt(m, 10), parseInt(d, 10));
+  }
+
+  // 4-digit short format: MMDD (e.g. 0827)
+  if (/^\d{4}$/.test(clean)) {
+    const m = parseInt(clean.slice(0, 2), 10);
+    const d = parseInt(clean.slice(2, 4), 10);
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return resolveYearForMonthDay(m, d);
+    }
+  }
+
+  return null;
+}
+
+function resolveYearForMonthDay(month, day) {
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  const currentMonth = today.getMonth() + 1; // 1-12
+
+  // If month is significantly in the future (e.g. browsing Nov/Dec while currently in Jan/Feb within 100-day window)
+  let year = currentYear;
+  if (month > currentMonth + 2) {
+    year = currentYear - 1;
+  }
+
+  const mm = String(month).padStart(2, '0');
+  const dd = String(day).padStart(2, '0');
+  return `${year}-${mm}-${dd}`;
+}
+
+function getInitialDate() {
+  const parsedDate = shortHashToDate(window.location.hash);
+  if (parsedDate) {
+    return parsedDate;
+  }
+  return getTodayStr();
+}
+
+function workspaceKey(dateStr) {
+  return `customnote_workspace_${dateStr}`;
+}
 
   function hasAnyWorkspaces() {
     for (let i = 0; i < localStorage.length; i++) {
@@ -76,6 +142,7 @@ function getCutoffDateStr() {
   const notesLayer = document.getElementById('notes-layer');
   const gridLayer = document.getElementById('grid-layer');
   const zoomBadge = document.getElementById('zoom-badge');
+  const selectionMarquee = document.getElementById('selection-marquee');
   const settingsBtn = document.getElementById('settings-btn');
   const shortcutsHelpBtn = document.getElementById('shortcuts-help-btn');
   const shortcutsModal = document.getElementById('shortcuts-modal');
@@ -297,13 +364,52 @@ function getCutoffDateStr() {
     selection.addRange(range);
   }
 
+  // ==========================================
+  // Multi-Selection Management
+  // ==========================================
+  function clearMultiSelection() {
+    state.selectedNoteIds.forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.classList.remove('selected');
+    });
+    state.selectedStrokeIds.forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.classList.remove('selected');
+    });
+    state.selectedNoteIds.clear();
+    state.selectedStrokeIds.clear();
+  }
+
+  function selectNote(id, addToSelection = false) {
+    if (!addToSelection) {
+      clearMultiSelection();
+    }
+    state.selectedNoteIds.add(id);
+    state.selectedNoteId = id;
+    const el = document.getElementById(id);
+    if (el) el.classList.add('selected');
+  }
+
+  function selectStroke(id, addToSelection = false) {
+    if (!addToSelection) {
+      clearMultiSelection();
+    }
+    state.selectedStrokeIds.add(id);
+    const el = document.getElementById(id);
+    if (el) el.classList.add('selected');
+  }
+
+  function hasMultiSelection() {
+    return (state.selectedNoteIds.size + state.selectedStrokeIds.size) > 1;
+  }
+
   function setActiveNote(id) {
     state.activeNoteId = id;
     state.selectedNoteId = id;
     document.querySelectorAll('.note-card').forEach((el) => {
       if (el.id === id) {
-        el.classList.add('focused');
-      } else {
+        el.classList.add('focused', 'selected');
+      } else if (!state.selectedNoteIds.has(el.id)) {
         el.classList.remove('focused', 'selected');
       }
     });
@@ -313,7 +419,10 @@ function getCutoffDateStr() {
     state.activeNoteId = null;
     state.selectedNoteId = null;
     document.querySelectorAll('.note-card').forEach((el) => {
-      el.classList.remove('focused', 'selected');
+      el.classList.remove('focused');
+      if (!state.selectedNoteIds.has(el.id)) {
+        el.classList.remove('selected');
+      }
     });
     hideFloatingFormatBar();
   }
@@ -371,15 +480,37 @@ function getCutoffDateStr() {
       setActiveNote(id);
     });
 
-    // --- Drag Note (Mouse + Touch Support) ---
+    // --- Drag Note (Mouse + Touch Support & Group Drag) ---
     function startDraggingNote(clientX, clientY) {
       const noteData = state.notes.get(id);
       if (!noteData) return;
 
+      const isGroupDrag = state.selectedNoteIds.has(id) && hasMultiSelection();
       const startMouseX = clientX;
       const startMouseY = clientY;
+
+      // Single note initial pos
       const startX = noteData.x;
       const startY = noteData.y;
+
+      // Group drag initial positions
+      const initNotes = new Map();
+      const initStrokes = new Map();
+
+      if (isGroupDrag) {
+        state.selectedNoteIds.forEach((nId) => {
+          const n = state.notes.get(nId);
+          if (n) initNotes.set(nId, { x: n.x, y: n.y });
+        });
+        state.selectedStrokeIds.forEach((sId) => {
+          const s = state.drawings.find((st) => st.id === sId);
+          if (s) initStrokes.set(sId, JSON.parse(JSON.stringify(s)));
+        });
+      } else {
+        if (!state.selectedNoteIds.has(id)) {
+          selectNote(id, false);
+        }
+      }
 
       document.body.style.cursor = 'grabbing';
 
@@ -387,10 +518,42 @@ function getCutoffDateStr() {
         const dx = (currentX - startMouseX) / state.scale;
         const dy = (currentY - startMouseY) / state.scale;
 
-        noteData.x = Math.round(startX + dx);
-        noteData.y = Math.round(startY + dy);
-        noteEl.style.left = `${noteData.x}px`;
-        noteEl.style.top = `${noteData.y}px`;
+        if (isGroupDrag) {
+          initNotes.forEach((initPos, nId) => {
+            const nData = state.notes.get(nId);
+            const nEl = document.getElementById(nId);
+            if (nData && nEl) {
+              nData.x = Math.round(initPos.x + dx);
+              nData.y = Math.round(initPos.y + dy);
+              nEl.style.left = `${nData.x}px`;
+              nEl.style.top = `${nData.y}px`;
+            }
+          });
+
+          initStrokes.forEach((initStroke, sId) => {
+            const stroke = state.drawings.find((st) => st.id === sId);
+            if (stroke) {
+              if (stroke.type === 'line') {
+                stroke.x1 = Math.round(initStroke.x1 + dx);
+                stroke.y1 = Math.round(initStroke.y1 + dy);
+                stroke.x2 = Math.round(initStroke.x2 + dx);
+                stroke.y2 = Math.round(initStroke.y2 + dy);
+              } else if (stroke.type === 'path' && Array.isArray(stroke.points)) {
+                stroke.points = initStroke.points.map((p) => ({
+                  x: Math.round(p.x + dx),
+                  y: Math.round(p.y + dy),
+                }));
+                stroke.d = pointsToSvgPath(stroke.points);
+              }
+              renderStrokeElement(stroke);
+            }
+          });
+        } else {
+          noteData.x = Math.round(startX + dx);
+          noteData.y = Math.round(startY + dy);
+          noteEl.style.left = `${noteData.x}px`;
+          noteEl.style.top = `${noteData.y}px`;
+        }
       }
 
       function onMouseMove(moveEvent) {
@@ -410,6 +573,48 @@ function getCutoffDateStr() {
         window.removeEventListener('mouseup', onEnd);
         window.removeEventListener('touchmove', onTouchMove);
         window.removeEventListener('touchend', onEnd);
+
+        if (isGroupDrag) {
+          const movedNotes = [];
+          initNotes.forEach((initPos, nId) => {
+            const nData = state.notes.get(nId);
+            if (nData && (nData.x !== initPos.x || nData.y !== initPos.y)) {
+              movedNotes.push({ id: nId, prevX: initPos.x, prevY: initPos.y, newX: nData.x, newY: nData.y });
+            }
+          });
+
+          const movedStrokes = [];
+          initStrokes.forEach((initStroke, sId) => {
+            const stroke = state.drawings.find((st) => st.id === sId);
+            if (stroke) {
+              movedStrokes.push({
+                id: sId,
+                prevStroke: initStroke,
+                newStroke: JSON.parse(JSON.stringify(stroke)),
+              });
+            }
+          });
+
+          if (movedNotes.length > 0 || movedStrokes.length > 0) {
+            state.undoStack.push({
+              type: 'move_group',
+              notes: movedNotes,
+              drawings: movedStrokes,
+            });
+          }
+        } else {
+          if (noteData.x !== startX || noteData.y !== startY) {
+            state.undoStack.push({
+              type: 'move_note',
+              id: noteData.id,
+              prevX: startX,
+              prevY: startY,
+              newX: noteData.x,
+              newY: noteData.y,
+            });
+          }
+        }
+
         debounceSave();
       }
 
@@ -961,6 +1166,18 @@ function getCutoffDateStr() {
         if (state.activeTool === 'eraser') {
           e.stopPropagation();
           eraseStroke(stroke.id);
+        } else if (state.activeTool === 'select' && e.button === 0) {
+          e.stopPropagation();
+          if (e.shiftKey || e.ctrlKey) {
+            if (state.selectedStrokeIds.has(stroke.id)) {
+              state.selectedStrokeIds.delete(stroke.id);
+              el.classList.remove('selected');
+            } else {
+              selectStroke(stroke.id, true);
+            }
+          } else {
+            selectStroke(stroke.id, false);
+          }
         }
       });
       el.addEventListener('mouseenter', () => {
@@ -1031,18 +1248,94 @@ function getCutoffDateStr() {
       renderNoteElement(noteData);
       window.ActivityTracker?.logNoteCreated(state.activeDate);
       setTimeout(() => focusNote(noteData.id), 10);
+    } else if (action.type === 'delete_group') {
+      clearMultiSelection();
+      (action.notes || []).forEach((noteData) => {
+        state.notes.set(noteData.id, noteData);
+        renderNoteElement(noteData);
+        state.selectedNoteIds.add(noteData.id);
+        const el = document.getElementById(noteData.id);
+        if (el) el.classList.add('selected');
+      });
+      (action.drawings || []).forEach((strokeData) => {
+        state.drawings.push(strokeData);
+        renderStrokeElement(strokeData);
+        state.selectedStrokeIds.add(strokeData.id);
+        const el = document.getElementById(strokeData.id);
+        if (el) el.classList.add('selected');
+      });
+      window.ActivityTracker?.logNoteCount(state.activeDate);
+    } else if (action.type === 'move_note') {
+      const noteData = state.notes.get(action.id);
+      if (noteData) {
+        noteData.x = action.prevX;
+        noteData.y = action.prevY;
+        const noteEl = document.getElementById(action.id);
+        if (noteEl) {
+          noteEl.style.left = `${noteData.x}px`;
+          noteEl.style.top = `${noteData.y}px`;
+        }
+        selectNote(action.id, false);
+      }
+    } else if (action.type === 'move_group') {
+      clearMultiSelection();
+      (action.notes || []).forEach((n) => {
+        const noteData = state.notes.get(n.id);
+        if (noteData) {
+          noteData.x = n.prevX;
+          noteData.y = n.prevY;
+          const noteEl = document.getElementById(n.id);
+          if (noteEl) {
+            noteEl.style.left = `${noteData.x}px`;
+            noteEl.style.top = `${noteData.y}px`;
+          }
+          state.selectedNoteIds.add(n.id);
+          if (noteEl) noteEl.classList.add('selected');
+        }
+      });
+      (action.drawings || []).forEach((d) => {
+        const strokeIndex = state.drawings.findIndex((s) => s.id === d.id);
+        if (strokeIndex !== -1 && d.prevStroke) {
+          state.drawings[strokeIndex] = JSON.parse(JSON.stringify(d.prevStroke));
+          renderStrokeElement(state.drawings[strokeIndex]);
+          state.selectedStrokeIds.add(d.id);
+          const el = document.getElementById(d.id);
+          if (el) el.classList.add('selected');
+        }
+      });
     }
     debounceSave();
   }
 
   // ==========================================
-  // Viewport & Canvas Interactions (Pan, Zoom & Draw)
+  // Viewport & Canvas Interactions (Pan, Zoom, Draw & Marquee Selection)
   // ==========================================
   let isPointerDownOnCanvas = false;
   let pointerDownPos = { x: 0, y: 0 };
   let lastMousePos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
 
+  // Right-click drag multi-selection state
+  let isRightDragging = false;
+  let rightDragStartScreen = { x: 0, y: 0 };
+  let rightDragStartWorld = { x: 0, y: 0 };
+  let hasRightDragged = false;
+
   viewport.addEventListener('mousedown', (e) => {
+    // Right click drag marquee selection (e.button === 2)
+    if (e.button === 2) {
+      e.preventDefault();
+      isRightDragging = true;
+      hasRightDragged = false;
+      rightDragStartScreen = { x: e.clientX, y: e.clientY };
+      rightDragStartWorld = screenToWorld(e.clientX, e.clientY);
+
+      if (!e.shiftKey && !e.ctrlKey) {
+        clearMultiSelection();
+      }
+      clearActiveNote();
+      return;
+    }
+
     // Check if clicked directly on viewport or canvas background or drawings layer
     if (
       e.target !== viewport &&
@@ -1053,6 +1346,11 @@ function getCutoffDateStr() {
       !e.target.classList.contains('drawing-stroke')
     ) {
       return;
+    }
+
+    // Left click on blank canvas: clear multi-selection unless Shift is held
+    if (e.button === 0 && !e.shiftKey && !e.ctrlKey) {
+      clearMultiSelection();
     }
 
     // In Pencil mode: start drawing path
@@ -1117,6 +1415,85 @@ function getCutoffDateStr() {
     lastMousePos.x = e.clientX;
     lastMousePos.y = e.clientY;
 
+    // Right-drag Marquee Selection in Progress
+    if (isRightDragging) {
+      const dist = Math.hypot(e.clientX - rightDragStartScreen.x, e.clientY - rightDragStartScreen.y);
+      if (dist > 4) {
+        hasRightDragged = true;
+      }
+
+      const screenLeft = Math.min(rightDragStartScreen.x, e.clientX);
+      const screenTop = Math.min(rightDragStartScreen.y, e.clientY);
+      const screenWidth = Math.abs(rightDragStartScreen.x - e.clientX);
+      const screenHeight = Math.abs(rightDragStartScreen.y - e.clientY);
+
+      if (selectionMarquee) {
+        selectionMarquee.style.left = `${screenLeft}px`;
+        selectionMarquee.style.top = `${screenTop}px`;
+        selectionMarquee.style.width = `${screenWidth}px`;
+        selectionMarquee.style.height = `${screenHeight}px`;
+        selectionMarquee.classList.remove('hidden');
+      }
+
+      // World bounds calculation
+      const currentWorld = screenToWorld(e.clientX, e.clientY);
+      const minX = Math.min(rightDragStartWorld.x, currentWorld.x);
+      const maxX = Math.max(rightDragStartWorld.x, currentWorld.x);
+      const minY = Math.min(rightDragStartWorld.y, currentWorld.y);
+      const maxY = Math.max(rightDragStartWorld.y, currentWorld.y);
+
+      // Hit-test Note Cards
+      state.notes.forEach((note) => {
+        const noteEl = document.getElementById(note.id);
+        const noteHeight = noteEl ? noteEl.offsetHeight : 120;
+        const noteRight = note.x + (note.width || 300);
+        const noteBottom = note.y + noteHeight;
+
+        const overlaps = note.x < maxX && noteRight > minX && note.y < maxY && noteBottom > minY;
+        if (overlaps) {
+          state.selectedNoteIds.add(note.id);
+          if (noteEl) noteEl.classList.add('selected');
+        } else if (!e.shiftKey && !e.ctrlKey) {
+          state.selectedNoteIds.delete(note.id);
+          if (noteEl) noteEl.classList.remove('selected');
+        }
+      });
+
+      // Hit-test Vector Strokes
+      state.drawings.forEach((stroke) => {
+        const strokeEl = document.getElementById(stroke.id);
+        let overlaps = false;
+        if (stroke.type === 'line') {
+          const sMinX = Math.min(stroke.x1, stroke.x2);
+          const sMaxX = Math.max(stroke.x1, stroke.x2);
+          const sMinY = Math.min(stroke.y1, stroke.y2);
+          const sMaxY = Math.max(stroke.y1, stroke.y2);
+          overlaps = sMinX <= maxX && sMaxX >= minX && sMinY <= maxY && sMaxY >= minY;
+        } else if (stroke.type === 'path' && Array.isArray(stroke.points)) {
+          overlaps = stroke.points.some((p) => p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY);
+          if (!overlaps && stroke.points.length > 0) {
+            const ptsX = stroke.points.map((p) => p.x);
+            const ptsY = stroke.points.map((p) => p.y);
+            const sMinX = Math.min(...ptsX);
+            const sMaxX = Math.max(...ptsX);
+            const sMinY = Math.min(...ptsY);
+            const sMaxY = Math.max(...ptsY);
+            overlaps = sMinX <= maxX && sMaxX >= minX && sMinY <= maxY && sMaxY >= minY;
+          }
+        }
+
+        if (overlaps) {
+          state.selectedStrokeIds.add(stroke.id);
+          if (strokeEl) strokeEl.classList.add('selected');
+        } else if (!e.shiftKey && !e.ctrlKey) {
+          state.selectedStrokeIds.delete(stroke.id);
+          if (strokeEl) strokeEl.classList.remove('selected');
+        }
+      });
+
+      return;
+    }
+
     if (state.isDrawing && state.currentStroke) {
       const worldPos = screenToWorld(e.clientX, e.clientY);
       if (state.currentStroke.type === 'path') {
@@ -1160,6 +1537,13 @@ function getCutoffDateStr() {
   });
 
   window.addEventListener('mouseup', (e) => {
+    if (isRightDragging) {
+      isRightDragging = false;
+      if (selectionMarquee) {
+        selectionMarquee.classList.add('hidden');
+      }
+    }
+
     if (state.isDrawing && state.currentStroke) {
       state.drawings.push(state.currentStroke);
       state.undoStack.push({ type: 'add', stroke: state.currentStroke });
@@ -1176,6 +1560,14 @@ function getCutoffDateStr() {
     }
   });
 
+  // Prevent default context menu on right drag or on canvas
+  window.addEventListener('contextmenu', (e) => {
+    if (hasRightDragged || e.target.closest('#viewport')) {
+      e.preventDefault();
+      hasRightDragged = false;
+    }
+  });
+
   function startPanning(clientX, clientY) {
     state.isPanning = true;
     state.panStart = { x: clientX, y: clientY };
@@ -1187,24 +1579,11 @@ function getCutoffDateStr() {
     viewport.classList.remove('panning');
   }
 
-  // Wheel Zoom & Pan
+  // Direct Mouse Wheel Zoom (Centered at Cursor)
   viewport.addEventListener('wheel', (e) => {
     e.preventDefault();
-
-    // Zooming if Ctrl key is pressed or trackpad pinch
-    if (e.ctrlKey || e.metaKey) {
-      const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
-      zoomAt(e.clientX, e.clientY, zoomFactor);
-    } else {
-      // Pan canvas with 2-finger trackpad or wheel
-      if (e.shiftKey) {
-        state.panX -= e.deltaY;
-      } else {
-        state.panX -= e.deltaX;
-        state.panY -= e.deltaY;
-      }
-      updateTransform();
-    }
+    const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
+    zoomAt(e.clientX, e.clientY, zoomFactor);
   }, { passive: false });
 
   // Keyboard Navigation & Shortcuts
@@ -1239,7 +1618,104 @@ function getCutoffDateStr() {
       }
     }
 
-    // Ctrl + Z: Undo last stroke (when not typing in an editable field)
+    // Ctrl + C: Copy selected notes and drawings (when not typing in an editable field)
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C') && !isEditingText(e)) {
+      if (state.selectedNoteIds.size > 0 || state.selectedStrokeIds.size > 0) {
+        const copiedNotes = [];
+        state.selectedNoteIds.forEach((id) => {
+          const note = state.notes.get(id);
+          if (note) {
+            const noteEl = document.getElementById(id);
+            const content = noteEl?.querySelector('.note-body')?.innerHTML || note.content;
+            copiedNotes.push({ ...note, content });
+          }
+        });
+        const copiedStrokes = [];
+        state.selectedStrokeIds.forEach((id) => {
+          const stroke = state.drawings.find((s) => s.id === id);
+          if (stroke) copiedStrokes.push(JSON.parse(JSON.stringify(stroke)));
+        });
+
+        if (copiedNotes.length > 0 || copiedStrokes.length > 0) {
+          state.clipboard = { notes: copiedNotes, drawings: copiedStrokes };
+          e.preventDefault();
+        }
+      }
+    }
+
+    // Ctrl + V: Paste copied notes and drawings (when not typing in an editable field)
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V') && !isEditingText(e)) {
+      if (state.clipboard && (state.clipboard.notes.length > 0 || state.clipboard.drawings.length > 0)) {
+        e.preventDefault();
+        clearMultiSelection();
+
+        const newSelectedNotes = new Set();
+        state.clipboard.notes.forEach((note) => {
+          const newId = generateId();
+          const newNote = {
+            id: newId,
+            x: note.x + 30,
+            y: note.y + 30,
+            width: note.width,
+            content: note.content,
+            zIndex: ++state.zIndexCounter,
+          };
+          state.notes.set(newId, newNote);
+          renderNoteElement(newNote);
+          newSelectedNotes.add(newId);
+          const el = document.getElementById(newId);
+          if (el) el.classList.add('selected');
+        });
+
+        const newSelectedStrokes = new Set();
+        state.clipboard.drawings.forEach((origStroke) => {
+          const newId = 'stroke_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+          const newStroke = JSON.parse(JSON.stringify(origStroke));
+          newStroke.id = newId;
+          if (newStroke.type === 'line') {
+            newStroke.x1 += 30;
+            newStroke.y1 += 30;
+            newStroke.x2 += 30;
+            newStroke.y2 += 30;
+          } else if (newStroke.type === 'path' && Array.isArray(newStroke.points)) {
+            newStroke.points = newStroke.points.map((p) => ({ x: p.x + 30, y: p.y + 30 }));
+            newStroke.d = pointsToSvgPath(newStroke.points);
+          }
+          state.drawings.push(newStroke);
+          renderStrokeElement(newStroke);
+          newSelectedStrokes.add(newId);
+          const el = document.getElementById(newId);
+          if (el) el.classList.add('selected');
+        });
+
+        state.selectedNoteIds = newSelectedNotes;
+        state.selectedStrokeIds = newSelectedStrokes;
+
+        // Cascade next paste
+        state.clipboard.notes.forEach((n) => {
+          n.x += 30;
+          n.y += 30;
+        });
+        state.clipboard.drawings.forEach((s) => {
+          if (s.type === 'line') {
+            s.x1 += 30;
+            s.y1 += 30;
+            s.x2 += 30;
+            s.y2 += 30;
+          } else if (s.points) {
+            s.points.forEach((p) => {
+              p.x += 30;
+              p.y += 30;
+            });
+          }
+        });
+
+        window.ActivityTracker?.logNoteCount(state.activeDate);
+        debounceSave();
+      }
+    }
+
+    // Ctrl + Z: Undo last action (when not typing in an editable field)
     if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && !isEditingText(e)) {
       e.preventDefault();
       undoLastAction();
@@ -1254,8 +1730,12 @@ function getCutoffDateStr() {
       return;
     }
 
-    // Escape: exit drawing tool or deselect note or close modals
+    // Escape: clear multi-selection or close modals
     if (e.key === 'Escape') {
+      if (state.selectedNoteIds.size > 0 || state.selectedStrokeIds.size > 0) {
+        clearMultiSelection();
+        return;
+      }
       if (state.activeTool !== 'select') {
         setTool('select');
         return;
@@ -1274,10 +1754,47 @@ function getCutoffDateStr() {
       }
     }
 
-    // Delete / Backspace note when selected (and not currently editing inside note body)
-    if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedNoteId && !isEditingText(e)) {
-      e.preventDefault();
-      deleteNote(state.selectedNoteId);
+    // Delete / Backspace: delete multi-selected items or selected single note (when not editing text)
+    if ((e.key === 'Delete' || e.key === 'Backspace') && !isEditingText(e)) {
+      if (state.selectedNoteIds.size > 0 || state.selectedStrokeIds.size > 0) {
+        e.preventDefault();
+        const deletedNotes = [];
+        state.selectedNoteIds.forEach((id) => {
+          const note = state.notes.get(id);
+          if (note) {
+            const el = document.getElementById(id);
+            if (el) {
+              const body = el.querySelector('.note-body');
+              if (body) note.content = body.innerHTML;
+              el.remove();
+            }
+            deletedNotes.push({ ...note });
+            state.notes.delete(id);
+          }
+        });
+
+        const deletedStrokes = [];
+        state.selectedStrokeIds.forEach((id) => {
+          const idx = state.drawings.findIndex((s) => s.id === id);
+          if (idx !== -1) {
+            const stroke = state.drawings.splice(idx, 1)[0];
+            const el = document.getElementById(id);
+            if (el) el.remove();
+            deletedStrokes.push(stroke);
+          }
+        });
+
+        state.undoStack.push({ type: 'delete_group', notes: deletedNotes, drawings: deletedStrokes });
+        clearMultiSelection();
+        hideFloatingFormatBar();
+        window.ActivityTracker?.logNoteCount(state.activeDate);
+        debounceSave();
+        return;
+      } else if (state.selectedNoteId) {
+        e.preventDefault();
+        deleteNote(state.selectedNoteId);
+        return;
+      }
     }
 
     // Reset view: Ctrl + 0
@@ -1517,9 +2034,15 @@ function getCutoffDateStr() {
     }, 600);
   }
 
-  function switchToDate(dateStr) {
+  function switchToDate(dateStr, updateHash = true) {
     if (!dateStr || state.activeDate === dateStr) return;
     flushPendingSaves();
+    if (updateHash) {
+      const shortHash = dateToShortHash(dateStr);
+      if (shortHash) {
+        history.replaceState(null, '', `#${shortHash}`);
+      }
+    }
     loadFromStorage(dateStr);
   }
 
@@ -1951,14 +2474,26 @@ function getCutoffDateStr() {
   // Initialization
   // ==========================================
   function init() {
-    loadFromStorage(getTodayStr());
+    const startDate = getInitialDate();
+    const initialShortHash = dateToShortHash(startDate);
+    if (initialShortHash) {
+      history.replaceState(null, '', `#${initialShortHash}`);
+    }
+
+    loadFromStorage(startDate);
     setupAuth();
     pruneExpiredWorkspaces();
 
     // Activity Tracker mount with date select callback
     window.ActivityTracker?.mount((selectedDate) => {
-      if (!window.MobileManager?.isMobile()) {
-        switchToDate(selectedDate);
+      switchToDate(selectedDate);
+    });
+
+    // Listen to manual URL hash changes or browser back/forward
+    window.addEventListener('hashchange', () => {
+      const newDate = shortHashToDate(window.location.hash);
+      if (newDate && newDate !== state.activeDate) {
+        switchToDate(newDate, false);
       }
     });
 
