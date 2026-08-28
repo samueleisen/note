@@ -1,8 +1,8 @@
 /**
  * ActivityTracker — Minimalist Top Ambient Strip Activity Tracker & Canvas Selector
  *
- * Configurable linear activity strip (100 days) along the top edge.
- * Each cell serves as a visual activity heatmap and date-canvas selector.
+ * Default View: 30-day compact resting strip centered at top edge.
+ * Expanded View (Tab): Spreads fully downward into a 365-day (1-year) calendar heatmap grid.
  */
 
 window.ActivityTracker = (() => {
@@ -11,10 +11,13 @@ window.ActivityTracker = (() => {
   // -----------------------------------------------
   // Config
   // -----------------------------------------------
-  const DAYS_COUNT = 100; // Easily configurable: any number of days
+  const TOTAL_DAYS = 365;      // 1 Full Year
+  const COLLAPSED_DAYS = 30;   // Compact resting view
 
+  let _isExpanded = false;
   let _selectedDate = getTodayStr();
   let _onDateSelect = null;
+  let _countsMap = {}; // In-memory map: { 'YYYY-MM-DD': count }
 
   function getTodayStr() {
     return new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
@@ -35,6 +38,16 @@ window.ActivityTracker = (() => {
     _refresh();
   }
 
+  function setActivityCounts(countsMap) {
+    _countsMap = countsMap || {};
+    _refresh();
+  }
+
+  function setDateCount(dateStr, count) {
+    _countsMap[dateStr] = count;
+    _refresh();
+  }
+
   function setActiveDate(dateStr) {
     _selectedDate = dateStr || getTodayStr();
     _updateSelectedCell();
@@ -44,65 +57,107 @@ window.ActivityTracker = (() => {
     return _selectedDate;
   }
 
+  function isExpanded() {
+    return _isExpanded;
+  }
+
+  function toggleExpand(forceState) {
+    _isExpanded = typeof forceState === 'boolean' ? forceState : !_isExpanded;
+    const railEl = document.getElementById('activity-widget');
+    if (railEl) {
+      railEl.classList.toggle('expanded', _isExpanded);
+    }
+    _renderGrid();
+  }
+
   // -----------------------------------------------
   // Grid Data Builder
   // -----------------------------------------------
   function getLevel(count) {
-    if (!count) return 0;
-    if (count <= 2) return 1;
-    if (count <= 5) return 2;
-    return 3;
+    if (!count || count <= 0) return 0;
+    if (count <= 3) return 1; // 1 to 3 notes
+    if (count <= 6) return 2; // 4 to 6 notes
+    if (count <= 9) return 3; // 7 to 9 notes
+    return 4;                 // 10+ notes
   }
 
   function formatDateLabel(dateObj) {
     return dateObj.toLocaleDateString(undefined, {
       month: 'short',
       day: 'numeric',
+      year: 'numeric',
     });
   }
 
+  const ROWS_COUNT = 12;      // 12 rows of 30 days = 360 days (1 year)
+  const COLS_COUNT = 30;      // 30 columns per row
+
   function buildGrid() {
     const today = new Date();
-
     const cells = [];
 
-    // Chronological order: index (DAYS_COUNT - 2) is today, (DAYS_COUNT - 1) is tomorrow
-    for (let k = 0; k < DAYS_COUNT; k++) {
-      const offsetFromToday = k - (DAYS_COUNT - 2);
-      const d = new Date(today);
-      d.setDate(today.getDate() + offsetFromToday);
-      const dateStr = d.toISOString().slice(0, 10);
+    if (!_isExpanded) {
+      // Collapsed: single row of 30 days
+      for (let c = 0; c < COLS_COUNT; c++) {
+        const offsetFromToday = c - (COLS_COUNT - 2);
+        cells.push(createCellData(today, offsetFromToday));
+      }
+    } else {
+      // Expanded: 12 rows of 30 days (Row 0 = Recent 30 days, Row 1 = 30 days prior, ...)
+      for (let r = 0; r < ROWS_COUNT; r++) {
+        for (let c = 0; c < COLS_COUNT; c++) {
+          const offsetFromToday = -(COLS_COUNT - 2) - (r * COLS_COUNT) + c;
+          cells.push(createCellData(today, offsetFromToday));
+        }
+      }
+    }
 
-      // Direct count from unified date workspace
-      let count = 0;
+    const total = cells.reduce((sum, c) => sum + c.count, 0);
+    return { cells, total };
+  }
+
+  function createCellData(today, offsetFromToday) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + offsetFromToday);
+    const dateStr = d.toISOString().slice(0, 10);
+
+    let count = _countsMap[dateStr];
+    if (typeof count !== 'number') {
       try {
-        const ws = localStorage.getItem('customnote_workspace_' + dateStr);
-        if (ws) {
-          const parsed = JSON.parse(ws);
+        const raw = localStorage.getItem('customnote_workspace_' + dateStr);
+        if (raw) {
+          const parsed = JSON.parse(raw);
           count = Array.isArray(parsed.notes) ? parsed.notes.length : 0;
+        } else {
+          count = 0;
         }
       } catch {
         count = 0;
       }
-
-      const isToday = offsetFromToday === 0;
-      const isTomorrow = offsetFromToday === 1;
-      const isSelected = dateStr === _selectedDate;
-
-      cells.push({
-        date: dateStr,
-        formattedDate: formatDateLabel(d),
-        count,
-        level: getLevel(count),
-        isToday,
-        isTomorrow,
-        isSelected,
-      });
+      _countsMap[dateStr] = count;
     }
 
-    const total = cells.reduce((sum, c) => sum + c.count, 0);
+    const isToday = offsetFromToday === 0;
+    const isTomorrow = offsetFromToday === 1;
+    const isSelected = dateStr === _selectedDate;
 
-    return { cells, total };
+    let label = count === 0 ? '' : `${count} note${count !== 1 ? 's' : ''}`;
+    if (isToday) {
+      label = label ? `${label} (Today)` : '(Today)';
+    } else if (isTomorrow) {
+      label = label ? `${label} (Tomorrow)` : '(Tomorrow)';
+    }
+
+    return {
+      date: dateStr,
+      formattedDate: formatDateLabel(d),
+      count,
+      level: getLevel(count),
+      isToday,
+      isTomorrow,
+      isSelected,
+      tip: label ? `${formatDateLabel(d)}  ·  ${label}` : formatDateLabel(d),
+    };
   }
 
   // -----------------------------------------------
@@ -115,8 +170,10 @@ window.ActivityTracker = (() => {
 
     const { cells } = buildGrid();
 
+    _gridEl.className = _isExpanded ? 'activity-grid expanded' : 'activity-grid collapsed';
     _gridEl.innerHTML = '';
-    cells.forEach(cell => {
+
+    cells.forEach((cell) => {
       const div = document.createElement('div');
       div.className = `ac-cell ac-l${cell.level}`;
       div.dataset.date = cell.date;
@@ -125,9 +182,7 @@ window.ActivityTracker = (() => {
       if (cell.isSelected) div.classList.add('ac-selected');
       if (cell.isTomorrow) div.classList.add('ac-tomorrow');
 
-      let label = cell.count === 0
-        ? ''
-        : `${cell.count} note${cell.count !== 1 ? 's' : ''}`;
+      let label = cell.count === 0 ? '' : `${cell.count} note${cell.count !== 1 ? 's' : ''}`;
 
       if (cell.isToday) {
         label = label ? `${label} (Today)` : '(Today)';
@@ -136,7 +191,6 @@ window.ActivityTracker = (() => {
       }
 
       div.dataset.tip = label ? `${cell.formattedDate}  ·  ${label}` : cell.formattedDate;
-
       _gridEl.appendChild(div);
     });
   }
@@ -144,7 +198,7 @@ window.ActivityTracker = (() => {
   function _updateSelectedCell() {
     if (!_gridEl) return;
     const allCells = _gridEl.querySelectorAll('.ac-cell');
-    allCells.forEach(cell => {
+    allCells.forEach((cell) => {
       cell.classList.toggle('ac-selected', cell.dataset.date === _selectedDate);
     });
   }
@@ -175,7 +229,7 @@ window.ActivityTracker = (() => {
     }
 
     // Cell Click -> Date selection
-    _gridEl.addEventListener('click', e => {
+    _gridEl.addEventListener('click', (e) => {
       const cell = e.target.closest('.ac-cell');
       if (!cell || !cell.dataset.date) return;
 
@@ -183,24 +237,28 @@ window.ActivityTracker = (() => {
       _selectedDate = targetDate;
       _updateSelectedCell();
 
+      if (_isExpanded) {
+        toggleExpand(false); // Collapse when date chosen
+      }
+
       if (_onDateSelect) {
         _onDateSelect(targetDate);
       }
     });
 
-    _gridEl.addEventListener('mouseover', e => {
+    _gridEl.addEventListener('mouseover', (e) => {
       const cell = e.target.closest('.ac-cell[data-tip]');
       if (!cell) return;
       tip.textContent = cell.dataset.tip;
       tip.classList.add('ac-tip-visible');
     });
 
-    _gridEl.addEventListener('mouseout', e => {
+    _gridEl.addEventListener('mouseout', (e) => {
       if (!e.target.closest('.ac-cell[data-tip]')) return;
       tip.classList.remove('ac-tip-visible');
     });
 
-    _gridEl.addEventListener('mousemove', e => {
+    _gridEl.addEventListener('mousemove', (e) => {
       tip.style.left = `${e.clientX}px`;
       tip.style.top = `${e.clientY}px`;
     });
@@ -210,9 +268,13 @@ window.ActivityTracker = (() => {
     logNoteCreated,
     logNoteDeleted,
     logNoteCount,
+    setActivityCounts,
+    setDateCount,
     setActiveDate,
     getActiveDate,
     getTodayStr,
+    isExpanded,
+    toggleExpand,
     mount,
     refresh: _refresh,
   };

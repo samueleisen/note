@@ -86,6 +86,19 @@
     </button>
   </div>
 
+  <!-- ═══ PERSONAL STORED CELLS / CUSTOM CANVASES PANEL (Top-Left, Tab-Triggered) ═══ -->
+  <div id="custom-boards-panel" class="custom-boards-panel hidden" aria-label="Personal Stored Canvases">
+    <div class="custom-boards-header">
+      <span class="custom-boards-title">Personal Boards</span>
+      <button id="add-custom-board-btn" class="custom-add-btn" title="Create new custom canvas">+</button>
+    </div>
+    <div id="custom-board-input-row" class="custom-board-input-row hidden">
+      <input type="text" id="new-board-name-input" placeholder="board-name" maxlength="20" autocomplete="off" />
+      <button id="save-new-board-btn" class="custom-confirm-btn">Add</button>
+    </div>
+    <div id="custom-boards-list" class="custom-boards-list"></div>
+  </div>
+
   <!-- ═══ ACTIVITY RAIL (detachable — see activity.js for removal instructions) ═══ -->
   <div id="activity-widget" class="activity-rail" aria-label="Activity Rail">
     <div id="activity-grid" class="activity-grid"></div>
@@ -196,6 +209,7 @@
         <div class="shortcut-group">
           <h3>Navigation & Canvas</h3>
           <div class="shortcut-row"><span>Create note at cursor</span> <kbd>Space</kbd></div>
+          <div class="shortcut-row"><span>Toggle 1-Year history</span> <kbd>Tab</kbd></div>
           <div class="shortcut-row"><span>Jump to today's canvas</span> <kbd>T</kbd></div>
           <div class="shortcut-row"><span>Pan canvas</span> <kbd>Left Drag</kbd></div>
           <div class="shortcut-row"><span>Multi-select area</span> <kbd>Right Drag</kbd></div>

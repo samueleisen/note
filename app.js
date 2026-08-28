@@ -16,6 +16,7 @@ const STORAGE_KEY_NOTES = 'customnote_notes_v1';
 const STORAGE_KEY_VIEW = 'customnote_viewport_v1';
 const STORAGE_KEY_SETTINGS = 'customnote_settings_v1';
 const STORAGE_KEY_DRAWINGS = 'customnote_drawings_v1';
+const STORAGE_KEY_CUSTOM_BOARDS = 'customnote_custom_boards_v1';
 
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 3.5;
@@ -25,6 +26,7 @@ const DRAG_THRESHOLD = 5; // Pixels to distinguish click vs drag
 const state = {
   currentUser: null,
   activeDate: getTodayStr(),
+  customBoards: new Set(),
   panX: 0,
   panY: 0,
   scale: 1.0,
@@ -54,7 +56,7 @@ function getTodayStr() {
 
 function getCutoffDateStr() {
   const d = new Date();
-  d.setDate(d.getDate() - 98); // 100-day window: (100 - 2) = 98 days ago
+  d.setDate(d.getDate() - 365); // 365-day (1 full year) retention window
   return d.toISOString().slice(0, 10);
 }
 
@@ -92,6 +94,11 @@ function shortHashToDate(hashStr) {
     if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
       return resolveYearForMonthDay(m, d);
     }
+  }
+
+  // Custom board name (e.g. 'ideas', 'todo', 'projects')
+  if (/^[a-zA-Z0-9_-]+$/.test(clean)) {
+    return clean.toLowerCase();
   }
 
   return null;
@@ -155,6 +162,14 @@ function workspaceKey(dateStr) {
   const btnFontInc = document.getElementById('btn-font-inc');
   const fontSizeDisplay = document.getElementById('font-size-display');
   const imageFileInput = document.getElementById('image-file-input');
+
+  // Custom Boards DOM Elements
+  const customBoardsPanel = document.getElementById('custom-boards-panel');
+  const addCustomBoardBtn = document.getElementById('add-custom-board-btn');
+  const customBoardInputRow = document.getElementById('custom-board-input-row');
+  const newBoardNameInput = document.getElementById('new-board-name-input');
+  const saveNewBoardBtn = document.getElementById('save-new-board-btn');
+  const customBoardsList = document.getElementById('custom-boards-list');
 
   // Auth DOM Elements
   const googleLoginBtn = document.getElementById('google-login-btn');
@@ -1348,6 +1363,13 @@ function workspaceKey(dateStr) {
       return;
     }
 
+    if (window.ActivityTracker?.isExpanded() && !e.target.closest('#activity-widget')) {
+      window.ActivityTracker.toggleExpand(false);
+    }
+    if (isCustomBoardsPanelOpen() && !e.target.closest('#custom-boards-panel')) {
+      toggleCustomBoardsPanel(false);
+    }
+
     // Left click on blank canvas: clear multi-selection unless Shift is held
     if (e.button === 0 && !e.shiftKey && !e.ctrlKey) {
       clearMultiSelection();
@@ -1590,6 +1612,14 @@ function workspaceKey(dateStr) {
   window.addEventListener('keydown', (e) => {
     // Tool hotkeys: P (pencil), L (line), E (eraser), V (select)
     if (!isEditingText(e) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // Tab: Toggle 1-Year History & Personal Stored Cells Panel
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const isExp = window.ActivityTracker?.isExpanded() || isCustomBoardsPanelOpen();
+        window.ActivityTracker?.toggleExpand(!isExp);
+        toggleCustomBoardsPanel(!isExp);
+        return;
+      }
       if (e.key === 'p' || e.key === 'P') {
         e.preventDefault();
         setTool('pencil');
@@ -1730,8 +1760,19 @@ function workspaceKey(dateStr) {
       return;
     }
 
-    // Escape: clear multi-selection or close modals
+    // Escape: close expanded views or modals, clear multi-selection
     if (e.key === 'Escape') {
+      let handled = false;
+      if (window.ActivityTracker?.isExpanded()) {
+        window.ActivityTracker.toggleExpand(false);
+        handled = true;
+      }
+      if (isCustomBoardsPanelOpen()) {
+        toggleCustomBoardsPanel(false);
+        handled = true;
+      }
+      if (handled) return;
+
       if (state.selectedNoteIds.size > 0 || state.selectedStrokeIds.size > 0) {
         clearMultiSelection();
         return;
@@ -1995,7 +2036,11 @@ function workspaceKey(dateStr) {
 
     // 2. Keep Activity Tracker heatmap synced
     if (window.ActivityTracker) {
-      window.ActivityTracker.refresh();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+        window.ActivityTracker.setDateCount(targetDate, notesArray.length);
+      } else {
+        window.ActivityTracker.refresh();
+      }
     }
 
     // 3. Push to cloud if user is signed in, not hydrating from cloud, and content actually changed
@@ -2044,6 +2089,139 @@ function workspaceKey(dateStr) {
       }
     }
     loadFromStorage(dateStr);
+    renderCustomBoardsList();
+  }
+
+  // ==========================================
+  // Personal Stored Cells / Custom Boards Manager
+  // ==========================================
+  function loadCustomBoards() {
+    state.customBoards = new Set();
+    const raw = localStorage.getItem(STORAGE_KEY_CUSTOM_BOARDS);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((name) => {
+            if (typeof name === 'string' && name.trim()) {
+              state.customBoards.add(name.trim().toLowerCase());
+            }
+          });
+        }
+      } catch {}
+    }
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('customnote_workspace_')) {
+        const id = key.replace('customnote_workspace_', '');
+        if (id && !/^\d{4}-\d{2}-\d{2}$/.test(id)) {
+          state.customBoards.add(id.toLowerCase());
+        }
+      }
+    }
+  }
+
+  function saveCustomBoards() {
+    const arr = Array.from(state.customBoards);
+    localStorage.setItem(STORAGE_KEY_CUSTOM_BOARDS, JSON.stringify(arr));
+    if (state.currentUser) {
+      const uid = state.currentUser.uid;
+      const refBoards = ref(database, `users/${uid}/custom_boards`);
+      set(refBoards, arr).catch((err) => console.error('Save custom boards error:', err));
+    }
+  }
+
+  function renderCustomBoardsList() {
+    if (!customBoardsList) return;
+    customBoardsList.innerHTML = '';
+
+    if (state.customBoards.size === 0) {
+      const emptyDiv = document.createElement('div');
+      emptyDiv.className = 'custom-boards-empty';
+      emptyDiv.textContent = 'No personal boards yet. Click + to add one!';
+      customBoardsList.appendChild(emptyDiv);
+      return;
+    }
+
+    state.customBoards.forEach((boardName) => {
+      const item = document.createElement('div');
+      item.className = 'custom-board-item';
+      if (state.activeDate === boardName) {
+        item.classList.add('active');
+      }
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'custom-board-name';
+      nameSpan.textContent = boardName;
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'custom-board-delete-btn';
+      delBtn.innerHTML = '&times;';
+      delBtn.title = `Delete #${boardName}`;
+
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (window.confirm(`Delete personal board "#${boardName}"? This will remove its canvas and notes.`)) {
+          deleteCustomBoard(boardName);
+        }
+      });
+
+      item.addEventListener('click', () => {
+        switchToDate(boardName);
+        toggleCustomBoardsPanel(false);
+        window.ActivityTracker?.toggleExpand(false);
+      });
+
+      item.appendChild(nameSpan);
+      item.appendChild(delBtn);
+      customBoardsList.appendChild(item);
+    });
+  }
+
+  function addCustomBoard(rawName) {
+    const clean = (rawName || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    if (!clean) return;
+    state.customBoards.add(clean);
+    saveCustomBoards();
+    renderCustomBoardsList();
+    if (customBoardInputRow) customBoardInputRow.classList.add('hidden');
+    if (newBoardNameInput) newBoardNameInput.value = '';
+    switchToDate(clean);
+    toggleCustomBoardsPanel(false);
+    window.ActivityTracker?.toggleExpand(false);
+  }
+
+  function deleteCustomBoard(name) {
+    if (!state.customBoards.has(name)) return;
+    state.customBoards.delete(name);
+    saveCustomBoards();
+    localStorage.removeItem(workspaceKey(name));
+    if (state.currentUser) {
+      const uid = state.currentUser.uid;
+      const refWs = ref(database, `users/${uid}/workspaces/${name}`);
+      set(refWs, null).catch(() => {});
+    }
+    renderCustomBoardsList();
+    if (state.activeDate === name) {
+      switchToDate(getTodayStr());
+    }
+  }
+
+  function toggleCustomBoardsPanel(forceState) {
+    if (!customBoardsPanel) return;
+    const shouldOpen = typeof forceState === 'boolean' ? forceState : customBoardsPanel.classList.contains('hidden');
+    if (shouldOpen) {
+      renderCustomBoardsList();
+      customBoardsPanel.classList.remove('hidden');
+    } else {
+      customBoardsPanel.classList.add('hidden');
+      if (customBoardInputRow) customBoardInputRow.classList.add('hidden');
+      if (newBoardNameInput) newBoardNameInput.value = '';
+    }
+  }
+
+  function isCustomBoardsPanelOpen() {
+    return customBoardsPanel && !customBoardsPanel.classList.contains('hidden');
   }
 
   // ==========================================
@@ -2371,8 +2549,12 @@ function workspaceKey(dateStr) {
 
           if (snap.exists()) {
             const allWorkspaces = snap.val();
+            const countsMap = {};
             for (const [dateKey, ws] of Object.entries(allWorkspaces)) {
               if (ws && typeof ws === 'object') {
+                if (/^\d{4}-\d{2}-\d{2}$/.test(dateKey) && Array.isArray(ws.notes)) {
+                  countsMap[dateKey] = ws.notes.length;
+                }
                 const rawLocal = localStorage.getItem(workspaceKey(dateKey));
                 let localData = null;
                 if (rawLocal) {
@@ -2392,6 +2574,27 @@ function workspaceKey(dateStr) {
                 }
               }
             }
+            window.ActivityTracker?.setActivityCounts(countsMap);
+          }
+
+          // 1.5 Fetch custom boards list from cloud
+          try {
+            const customBoardsRef = ref(database, `users/${user.uid}/custom_boards`);
+            const customBoardsSnap = await get(customBoardsRef);
+            if (customBoardsSnap.exists()) {
+              const list = customBoardsSnap.val();
+              if (Array.isArray(list)) {
+                list.forEach((b) => {
+                  if (typeof b === 'string' && b.trim()) {
+                    state.customBoards.add(b.trim().toLowerCase());
+                  }
+                });
+                saveCustomBoards();
+                renderCustomBoardsList();
+              }
+            }
+          } catch (cbErr) {
+            console.error('Custom boards cloud hydration error:', cbErr);
           }
 
           // 2. Refresh activity strip and attach real-time live listener for active date
@@ -2474,6 +2677,8 @@ function workspaceKey(dateStr) {
   // Initialization
   // ==========================================
   function init() {
+    loadCustomBoards();
+
     const startDate = getInitialDate();
     const initialShortHash = dateToShortHash(startDate);
     if (initialShortHash) {
@@ -2484,9 +2689,42 @@ function workspaceKey(dateStr) {
     setupAuth();
     pruneExpiredWorkspaces();
 
+    // Custom Boards UI Setup
+    if (addCustomBoardBtn) {
+      addCustomBoardBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (customBoardInputRow) {
+          customBoardInputRow.classList.toggle('hidden');
+          if (!customBoardInputRow.classList.contains('hidden')) {
+            newBoardNameInput?.focus();
+          }
+        }
+      });
+    }
+
+    if (saveNewBoardBtn) {
+      saveNewBoardBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        addCustomBoard(newBoardNameInput?.value);
+      });
+    }
+
+    if (newBoardNameInput) {
+      newBoardNameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          addCustomBoard(newBoardNameInput.value);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          customBoardInputRow?.classList.add('hidden');
+        }
+      });
+    }
+
     // Activity Tracker mount with date select callback
     window.ActivityTracker?.mount((selectedDate) => {
       switchToDate(selectedDate);
+      toggleCustomBoardsPanel(false);
     });
 
     // Listen to manual URL hash changes or browser back/forward
