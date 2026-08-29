@@ -1164,6 +1164,17 @@ kbd {
   box-shadow: 0 0 8px rgba(129, 140, 248, 0.9), 0 0 1px #ffffff;
 }
 
+/* Custom Tagged Color Cells (\red & \green) */
+.ac-cell.ac-color-red {
+  background: #ef4444 !important;
+  box-shadow: 0 0 7px rgba(239, 68, 68, 0.85) !important;
+}
+
+.ac-cell.ac-color-green {
+  background: #10b981 !important;
+  box-shadow: 0 0 7px rgba(16, 185, 129, 0.85) !important;
+}
+
 /* Today's cell marker */
 .ac-today {
   box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.75);

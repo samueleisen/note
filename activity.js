@@ -18,6 +18,7 @@ window.ActivityTracker = (() => {
   let _selectedDate = getTodayStr();
   let _onDateSelect = null;
   let _countsMap = {}; // In-memory map: { 'YYYY-MM-DD': count }
+  let _colorsMap = {}; // In-memory map: { 'YYYY-MM-DD': 'red' | 'green' | null }
 
   function getTodayStr() {
     return new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
@@ -45,6 +46,16 @@ window.ActivityTracker = (() => {
 
   function setDateCount(dateStr, count) {
     _countsMap[dateStr] = count;
+    _refresh();
+  }
+
+  function setActivityColors(colorsMap) {
+    _colorsMap = colorsMap || {};
+    _refresh();
+  }
+
+  function setDateColor(dateStr, colorName) {
+    _colorsMap[dateStr] = colorName || null;
     _refresh();
   }
 
@@ -116,25 +127,45 @@ window.ActivityTracker = (() => {
     return { cells, total };
   }
 
+  function extractColorFromNotes(notes) {
+    if (!Array.isArray(notes)) return null;
+    for (const note of notes) {
+      const text = note.content || '';
+      if (/\\red\b/i.test(text)) return 'red';
+      if (/\\green\b/i.test(text)) return 'green';
+    }
+    return null;
+  }
+
   function createCellData(today, offsetFromToday) {
     const d = new Date(today);
     d.setDate(today.getDate() + offsetFromToday);
     const dateStr = d.toISOString().slice(0, 10);
 
     let count = _countsMap[dateStr];
-    if (typeof count !== 'number') {
+    let customColor = _colorsMap[dateStr];
+
+    if (typeof count !== 'number' || customColor === undefined) {
       try {
         const raw = localStorage.getItem('customnote_workspace_' + dateStr);
         if (raw) {
           const parsed = JSON.parse(raw);
-          count = Array.isArray(parsed.notes) ? parsed.notes.length : 0;
+          if (typeof count !== 'number') {
+            count = Array.isArray(parsed.notes) ? parsed.notes.length : 0;
+          }
+          if (customColor === undefined) {
+            customColor = extractColorFromNotes(parsed.notes);
+          }
         } else {
-          count = 0;
+          if (typeof count !== 'number') count = 0;
+          if (customColor === undefined) customColor = null;
         }
       } catch {
-        count = 0;
+        if (typeof count !== 'number') count = 0;
+        if (customColor === undefined) customColor = null;
       }
       _countsMap[dateStr] = count;
+      _colorsMap[dateStr] = customColor;
     }
 
     const isToday = offsetFromToday === 0;
@@ -142,6 +173,12 @@ window.ActivityTracker = (() => {
     const isSelected = dateStr === _selectedDate;
 
     let label = count === 0 ? '' : `${count} note${count !== 1 ? 's' : ''}`;
+    if (customColor === 'red') {
+      label = label ? `${label} (Red Tag)` : '(Red Tag)';
+    } else if (customColor === 'green') {
+      label = label ? `${label} (Green Tag)` : '(Green Tag)';
+    }
+
     if (isToday) {
       label = label ? `${label} (Today)` : '(Today)';
     } else if (isTomorrow) {
@@ -153,6 +190,7 @@ window.ActivityTracker = (() => {
       formattedDate: formatDateLabel(d),
       count,
       level: getLevel(count),
+      customColor: customColor || null,
       isToday,
       isTomorrow,
       isSelected,
@@ -178,19 +216,15 @@ window.ActivityTracker = (() => {
       div.className = `ac-cell ac-l${cell.level}`;
       div.dataset.date = cell.date;
 
+      if (cell.customColor) {
+        div.classList.add(`ac-color-${cell.customColor}`);
+      }
+
       if (cell.isToday) div.classList.add('ac-today');
       if (cell.isSelected) div.classList.add('ac-selected');
       if (cell.isTomorrow) div.classList.add('ac-tomorrow');
 
-      let label = cell.count === 0 ? '' : `${cell.count} note${cell.count !== 1 ? 's' : ''}`;
-
-      if (cell.isToday) {
-        label = label ? `${label} (Today)` : '(Today)';
-      } else if (cell.isTomorrow) {
-        label = label ? `${label} (Tomorrow)` : '(Tomorrow)';
-      }
-
-      div.dataset.tip = label ? `${cell.formattedDate}  ·  ${label}` : cell.formattedDate;
+      div.dataset.tip = cell.tip;
       _gridEl.appendChild(div);
     });
   }
@@ -270,6 +304,8 @@ window.ActivityTracker = (() => {
     logNoteCount,
     setActivityCounts,
     setDateCount,
+    setActivityColors,
+    setDateColor,
     setActiveDate,
     getActiveDate,
     getTodayStr,

@@ -2037,6 +2037,13 @@ function workspaceKey(dateStr) {
     // 2. Keep Activity Tracker heatmap synced
     if (window.ActivityTracker) {
       if (/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+        let detectedColor = null;
+        for (const n of notesArray) {
+          const txt = n.content || '';
+          if (/\\red\b/i.test(txt)) { detectedColor = 'red'; break; }
+          if (/\\green\b/i.test(txt)) { detectedColor = 'green'; break; }
+        }
+        window.ActivityTracker.setDateColor(targetDate, detectedColor);
         window.ActivityTracker.setDateCount(targetDate, notesArray.length);
       } else {
         window.ActivityTracker.refresh();
@@ -2550,10 +2557,16 @@ function workspaceKey(dateStr) {
           if (snap.exists()) {
             const allWorkspaces = snap.val();
             const countsMap = {};
+            const colorsMap = {};
             for (const [dateKey, ws] of Object.entries(allWorkspaces)) {
               if (ws && typeof ws === 'object') {
                 if (/^\d{4}-\d{2}-\d{2}$/.test(dateKey) && Array.isArray(ws.notes)) {
                   countsMap[dateKey] = ws.notes.length;
+                  for (const n of ws.notes) {
+                    const txt = n.content || '';
+                    if (/\\red\b/i.test(txt)) { colorsMap[dateKey] = 'red'; break; }
+                    if (/\\green\b/i.test(txt)) { colorsMap[dateKey] = 'green'; break; }
+                  }
                 }
                 const rawLocal = localStorage.getItem(workspaceKey(dateKey));
                 let localData = null;
@@ -2575,6 +2588,7 @@ function workspaceKey(dateStr) {
               }
             }
             window.ActivityTracker?.setActivityCounts(countsMap);
+            window.ActivityTracker?.setActivityColors(colorsMap);
           }
 
           // 1.5 Fetch custom boards list from cloud
