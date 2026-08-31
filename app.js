@@ -2070,6 +2070,68 @@ function workspaceKey(dateStr) {
     }, 300);
   }
 
+  /**
+   * Sanitize note HTML before saving:
+   * - Unwraps <span> tags with no meaningful style (empty, inherit, or white color only)
+   * - Converts <font color=...> tags to <span style="color:..."> or strips them if no color
+   * - Normalizes adjacent text nodes into single clean nodes
+   * Preserves: bold, italic, underline, real color spans, lists, code, quotes, images, todos
+   */
+  function sanitizeNoteHtml(rawHtml) {
+    if (!rawHtml) return rawHtml;
+    const temp = document.createElement('div');
+    temp.innerHTML = rawHtml;
+    unwrapEmptySpans(temp);
+    temp.normalize();
+    return temp.innerHTML;
+  }
+
+  function isNeutralColor(colorStr) {
+    if (!colorStr) return true;
+    const c = colorStr.toLowerCase().trim();
+    return (
+      c === 'inherit' ||
+      c === 'initial' ||
+      c === 'unset' ||
+      c === 'transparent' ||
+      c === 'white' ||
+      c === '#ffffff' ||
+      c === '#fff' ||
+      c === 'rgb(255, 255, 255)' ||
+      c === 'rgb(255,255,255)'
+    );
+  }
+
+  function hasNoMeaningfulStyle(el) {
+    const style = el.getAttribute('style') || '';
+    if (!style.trim()) return true;
+    // Only has color, and that color is neutral
+    const colorMatch = style.match(/color\s*:\s*([^;]+)/i);
+    if (colorMatch && isNeutralColor(colorMatch[1].trim())) {
+      // Check there's no other style property
+      const cleaned = style.replace(/color\s*:\s*[^;]+;?/i, '').trim();
+      if (!cleaned) return true;
+    }
+    return false;
+  }
+
+  function unwrapEmptySpans(root) {
+    // Walk backwards so we can safely mutate NodeLists
+    const spans = Array.from(root.querySelectorAll('span'));
+    for (let i = spans.length - 1; i >= 0; i--) {
+      const sp = spans[i];
+      if (!sp.parentNode) continue;
+      // Only unwrap spans with no class and no meaningful style attribute
+      if (!sp.className && hasNoMeaningfulStyle(sp)) {
+        const parent = sp.parentNode;
+        while (sp.firstChild) {
+          parent.insertBefore(sp.firstChild, sp);
+        }
+        parent.removeChild(sp);
+      }
+    }
+  }
+
   function flushPendingSaves() {
     if (saveDebounceTimer) {
       clearTimeout(saveDebounceTimer);
@@ -2099,7 +2161,7 @@ function workspaceKey(dateStr) {
       x: note.x,
       y: note.y,
       width: note.width,
-      content: note.content,
+      content: sanitizeNoteHtml(note.content),
       zIndex: note.zIndex,
     }));
 
@@ -2559,7 +2621,7 @@ function workspaceKey(dateStr) {
           x: typeof note.x === 'number' ? note.x : 100,
           y: typeof note.y === 'number' ? note.y : 100,
           width: typeof note.width === 'number' ? note.width : 300,
-          content: note.content || '',
+          content: sanitizeNoteHtml(note.content || ''),
           zIndex: note.zIndex || 10,
         };
         state.notes.set(noteData.id, noteData);
@@ -2837,11 +2899,10 @@ function workspaceKey(dateStr) {
     }
 
     // Custom Color Input Listener
+    // Only apply on 'change' (fires when picker is closed/confirmed),
+    // NOT on 'input' which fires continuously while dragging inside the color wheel.
     const formatColorInput = document.getElementById('format-color-input');
     if (formatColorInput) {
-      formatColorInput.addEventListener('input', (e) => {
-        applyTextColor(e.target.value);
-      });
       formatColorInput.addEventListener('change', (e) => {
         applyTextColor(e.target.value);
         hideFormatColorMenu();
