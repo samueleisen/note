@@ -618,6 +618,112 @@ body.theme-paper .moon-icon {
   user-select: none;
 }
 
+/* Option B: Color Dropdown in Floating Format Bar */
+.format-color-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.format-color-trigger {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px !important;
+}
+
+.color-caret {
+  font-size: 9px;
+  opacity: 0.65;
+  margin-left: -1px;
+}
+
+.format-color-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(20, 22, 28, 0.92);
+  border: 1px solid var(--hud-border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-radius: var(--radius-md);
+  padding: 4px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 130px;
+  z-index: 110;
+  animation: fadeInPop 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.format-color-menu.hidden {
+  display: none;
+}
+
+.color-menu-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px !important;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-family: var(--font-main);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.color-menu-item:hover {
+  background: var(--hud-btn-hover);
+  color: var(--text-primary);
+}
+
+.color-menu-item input[type="color"] {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  left: 0;
+  top: 0;
+  padding: 0;
+  border: none;
+}
+
+.color-item-icon {
+  font-size: 13px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+}
+
+.clear-color-item .color-item-icon {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+@keyframes fadeInPop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
 /* Modal Overlay & Card */
 .modal-backdrop {
   position: fixed;

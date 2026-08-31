@@ -1034,6 +1034,12 @@ function workspaceKey(dateStr) {
 
   function hideFloatingFormatBar() {
     floatingFormatBar.classList.add('hidden');
+    hideFormatColorMenu();
+  }
+
+  function hideFormatColorMenu() {
+    const menu = document.getElementById('format-color-menu');
+    if (menu) menu.classList.add('hidden');
   }
 
   function getSelectedFontSize() {
@@ -1091,8 +1097,103 @@ function workspaceKey(dateStr) {
     }
   }
 
+  let lastSavedTextRange = null;
+
+  function applyTextColor(colorHex) {
+    const selection = window.getSelection();
+    if ((!selection.rangeCount || selection.isCollapsed) && lastSavedTextRange) {
+      selection.removeAllRanges();
+      selection.addRange(lastSavedTextRange);
+    }
+    if (!selection.rangeCount || selection.isCollapsed) return;
+
+    const normalizedHex = (colorHex || '').toLowerCase().trim();
+    // If #ffffff, rgb(255,255,255), 'white', or 'reset' -> revert to default theme color
+    if (!colorHex || normalizedHex === '#ffffff' || normalizedHex === '#fff' || normalizedHex === 'rgb(255, 255, 255)' || normalizedHex === 'reset' || normalizedHex === 'white') {
+      clearTextColor();
+      return;
+    }
+
+    document.execCommand('styleWithCSS', false, true);
+    document.execCommand('foreColor', false, colorHex);
+
+    if (state.activeNoteId) {
+      const noteEl = document.getElementById(state.activeNoteId);
+      if (noteEl) {
+        const noteData = state.notes.get(state.activeNoteId);
+        if (noteData) {
+          noteData.content = noteEl.querySelector('.note-body')?.innerHTML || '';
+          debounceSave();
+        }
+      }
+    }
+    hideFormatColorMenu();
+    updateFloatingFormatBar();
+  }
+
+  function clearTextColor() {
+    const selection = window.getSelection();
+    if ((!selection.rangeCount || selection.isCollapsed) && lastSavedTextRange) {
+      selection.removeAllRanges();
+      selection.addRange(lastSavedTextRange);
+    }
+    if (!selection.rangeCount || selection.isCollapsed) return;
+
+    document.execCommand('styleWithCSS', false, true);
+    document.execCommand('foreColor', false, 'inherit');
+
+    if (state.activeNoteId) {
+      const noteEl = document.getElementById(state.activeNoteId);
+      if (noteEl) {
+        const noteBody = noteEl.querySelector('.note-body');
+        if (noteBody) {
+          const spans = noteBody.querySelectorAll('span[style*="color"], font[color]');
+          spans.forEach((sp) => {
+            const col = sp.style.color;
+            if (col === 'inherit' || col === 'rgb(255, 255, 255)' || col === '#ffffff' || col === 'white' || !col) {
+              sp.style.color = '';
+              if (!sp.getAttribute('style') || sp.getAttribute('style').trim() === '') {
+                sp.removeAttribute('style');
+              }
+            }
+          });
+          const noteData = state.notes.get(state.activeNoteId);
+          if (noteData) {
+            noteData.content = noteBody.innerHTML;
+            debounceSave();
+          }
+        }
+      }
+    }
+    hideFormatColorMenu();
+    updateFloatingFormatBar();
+  }
+
   // Handle format bar buttons
   floatingFormatBar.addEventListener('mousedown', (e) => {
+    const sel = window.getSelection();
+    if (sel.rangeCount > 0 && !sel.isCollapsed) {
+      lastSavedTextRange = sel.getRangeAt(0).cloneRange();
+    }
+
+    // If clicking color trigger or color input, don't preventDefault so picker can open
+    if (e.target.closest('.custom-color-item') || e.target.closest('#format-color-input')) {
+      return;
+    }
+
+    if (e.target.closest('#btn-format-color-trigger')) {
+      e.preventDefault();
+      const menu = document.getElementById('format-color-menu');
+      if (menu) menu.classList.toggle('hidden');
+      return;
+    }
+
+    if (e.target.closest('#btn-clear-text-color')) {
+      e.preventDefault();
+      clearTextColor();
+      return;
+    }
+
     e.preventDefault(); // Prevent losing text selection
     const btn = e.target.closest('button');
     if (!btn) return;
@@ -2732,6 +2833,18 @@ function workspaceKey(dateStr) {
           e.preventDefault();
           customBoardInputRow?.classList.add('hidden');
         }
+      });
+    }
+
+    // Custom Color Input Listener
+    const formatColorInput = document.getElementById('format-color-input');
+    if (formatColorInput) {
+      formatColorInput.addEventListener('input', (e) => {
+        applyTextColor(e.target.value);
+      });
+      formatColorInput.addEventListener('change', (e) => {
+        applyTextColor(e.target.value);
+        hideFormatColorMenu();
       });
     }
 
