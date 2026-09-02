@@ -718,6 +718,7 @@ body.theme-paper .moon-icon {
     opacity: 0;
     transform: translate(-50%, 4px) scale(0.96);
   }
+
   to {
     opacity: 1;
     transform: translate(-50%, 0) scale(1);
@@ -1247,30 +1248,30 @@ kbd {
   transform: scale(1.35);
 }
 
-/* Intensity levels */
+/* Intensity levels (Refined Saturation Curve, Toned-Down Glow) */
 .ac-l0 {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .ac-l1 {
-  background: rgba(56, 58, 168, 0.35);
+  background: rgba(99, 102, 241, 0.30);
 }
 
 .ac-l2 {
-  background: rgba(72, 74, 209, 0.65);
+  background: rgba(99, 102, 241, 0.60);
 }
 
 .ac-l3 {
-  background: #5052da;
-  box-shadow: 0 0 5px rgba(99, 102, 241, 0.55);
+  background: #7479fe;
+  box-shadow: 0 0 3px rgba(112, 114, 246, 0.4);
 }
 
 .ac-l4 {
-  background: #6c7af9;
-  box-shadow: 0 0 8px rgba(129, 140, 248, 0.9), 0 0 1px #ffffff;
+  background: #9ea1fe;
+  box-shadow: 0 0 4px rgba(222, 223, 255, 0.5);
 }
 
-/* Custom Tagged Color Cells (\red & \green) */
+/* Custom Tagged Color Cells (\red, \green, \purple, \yellow) */
 .ac-cell.ac-color-red {
   background: #ef4444 !important;
   box-shadow: 0 0 7px rgba(239, 68, 68, 0.85) !important;
@@ -1279,6 +1280,16 @@ kbd {
 .ac-cell.ac-color-green {
   background: #10b981 !important;
   box-shadow: 0 0 7px rgba(16, 185, 129, 0.85) !important;
+}
+
+.ac-cell.ac-color-purple {
+  background: #530696 !important;
+  box-shadow: 0 0 7px rgba(74, 7, 136, 0.85) !important;
+}
+
+.ac-cell.ac-color-yellow {
+  background: #eab308 !important;
+  box-shadow: 0 0 7px rgba(234, 179, 8, 0.85) !important;
 }
 
 /* Today's cell marker */

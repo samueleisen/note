@@ -2201,12 +2201,25 @@ function workspaceKey(dateStr) {
     if (window.ActivityTracker) {
       if (/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
         let detectedColor = null;
+        let detectedTitle = null;
         for (const n of notesArray) {
           const txt = n.content || '';
-          if (/\\red\b/i.test(txt)) { detectedColor = 'red'; break; }
-          if (/\\green\b/i.test(txt)) { detectedColor = 'green'; break; }
+          if (!detectedColor) {
+            if (/\\red\b/i.test(txt)) detectedColor = 'red';
+            else if (/\\green\b/i.test(txt)) detectedColor = 'green';
+            else if (/\\(purple|darkpurple)\b/i.test(txt)) detectedColor = 'purple';
+            else if (/\\(yellow|gold)\b/i.test(txt)) detectedColor = 'yellow';
+          }
+          if (!detectedTitle) {
+            const clean = txt.replace(/<[^>]+>/g, ' ');
+            const match = clean.match(/\\title\s+([^\n\r<]+)/i);
+            if (match && match[1].trim()) {
+              detectedTitle = match[1].trim();
+            }
+          }
         }
         window.ActivityTracker.setDateColor(targetDate, detectedColor);
+        window.ActivityTracker.setDateTitle(targetDate, detectedTitle);
         window.ActivityTracker.setDateCount(targetDate, notesArray.length);
       } else {
         window.ActivityTracker.refresh();
@@ -2721,14 +2734,26 @@ function workspaceKey(dateStr) {
             const allWorkspaces = snap.val();
             const countsMap = {};
             const colorsMap = {};
+            const titlesMap = {};
             for (const [dateKey, ws] of Object.entries(allWorkspaces)) {
               if (ws && typeof ws === 'object') {
                 if (/^\d{4}-\d{2}-\d{2}$/.test(dateKey) && Array.isArray(ws.notes)) {
                   countsMap[dateKey] = ws.notes.length;
                   for (const n of ws.notes) {
                     const txt = n.content || '';
-                    if (/\\red\b/i.test(txt)) { colorsMap[dateKey] = 'red'; break; }
-                    if (/\\green\b/i.test(txt)) { colorsMap[dateKey] = 'green'; break; }
+                    if (!colorsMap[dateKey]) {
+                      if (/\\red\b/i.test(txt)) colorsMap[dateKey] = 'red';
+                      else if (/\\green\b/i.test(txt)) colorsMap[dateKey] = 'green';
+                      else if (/\\(purple|darkpurple)\b/i.test(txt)) colorsMap[dateKey] = 'purple';
+                      else if (/\\(yellow|gold)\b/i.test(txt)) colorsMap[dateKey] = 'yellow';
+                    }
+                    if (!titlesMap[dateKey]) {
+                      const clean = txt.replace(/<[^>]+>/g, ' ');
+                      const match = clean.match(/\\title\s+([^\n\r<]+)/i);
+                      if (match && match[1].trim()) {
+                        titlesMap[dateKey] = match[1].trim();
+                      }
+                    }
                   }
                 }
                 const rawLocal = localStorage.getItem(workspaceKey(dateKey));
@@ -2752,6 +2777,7 @@ function workspaceKey(dateStr) {
             }
             window.ActivityTracker?.setActivityCounts(countsMap);
             window.ActivityTracker?.setActivityColors(colorsMap);
+            window.ActivityTracker?.setActivityTitles(titlesMap);
           }
 
           // 1.5 Fetch custom boards list from cloud

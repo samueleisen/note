@@ -18,7 +18,8 @@ window.ActivityTracker = (() => {
   let _selectedDate = getTodayStr();
   let _onDateSelect = null;
   let _countsMap = {}; // In-memory map: { 'YYYY-MM-DD': count }
-  let _colorsMap = {}; // In-memory map: { 'YYYY-MM-DD': 'red' | 'green' | null }
+  let _colorsMap = {}; // In-memory map: { 'YYYY-MM-DD': 'red' | 'green' | 'purple' | 'yellow' | null }
+  let _titlesMap = {}; // In-memory map: { 'YYYY-MM-DD': title }
 
   function getTodayStr() {
     return new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
@@ -59,6 +60,16 @@ window.ActivityTracker = (() => {
     _refresh();
   }
 
+  function setActivityTitles(titlesMap) {
+    _titlesMap = titlesMap || {};
+    _refresh();
+  }
+
+  function setDateTitle(dateStr, title) {
+    _titlesMap[dateStr] = title || null;
+    _refresh();
+  }
+
   function setActiveDate(dateStr) {
     _selectedDate = dateStr || getTodayStr();
     _updateSelectedCell();
@@ -96,7 +107,6 @@ window.ActivityTracker = (() => {
     return dateObj.toLocaleDateString(undefined, {
       month: 'short',
       day: 'numeric',
-      year: 'numeric',
     });
   }
 
@@ -133,6 +143,20 @@ window.ActivityTracker = (() => {
       const text = note.content || '';
       if (/\\red\b/i.test(text)) return 'red';
       if (/\\green\b/i.test(text)) return 'green';
+      if (/\\(purple|darkpurple)\b/i.test(text)) return 'purple';
+      if (/\\(yellow|gold)\b/i.test(text)) return 'yellow';
+    }
+    return null;
+  }
+
+  function extractTitleFromNotes(notes) {
+    if (!Array.isArray(notes)) return null;
+    for (const note of notes) {
+      const text = (note.content || '').replace(/<[^>]+>/g, ' ');
+      const match = text.match(/\\title\s+([^\n\r<]+)/i);
+      if (match && match[1].trim()) {
+        return match[1].trim();
+      }
     }
     return null;
   }
@@ -144,8 +168,9 @@ window.ActivityTracker = (() => {
 
     let count = _countsMap[dateStr];
     let customColor = _colorsMap[dateStr];
+    let customTitle = _titlesMap[dateStr];
 
-    if (typeof count !== 'number' || customColor === undefined) {
+    if (typeof count !== 'number' || customColor === undefined || customTitle === undefined) {
       try {
         const raw = localStorage.getItem('customnote_workspace_' + dateStr);
         if (raw) {
@@ -156,16 +181,22 @@ window.ActivityTracker = (() => {
           if (customColor === undefined) {
             customColor = extractColorFromNotes(parsed.notes);
           }
+          if (customTitle === undefined) {
+            customTitle = extractTitleFromNotes(parsed.notes);
+          }
         } else {
           if (typeof count !== 'number') count = 0;
           if (customColor === undefined) customColor = null;
+          if (customTitle === undefined) customTitle = null;
         }
       } catch {
         if (typeof count !== 'number') count = 0;
         if (customColor === undefined) customColor = null;
+        if (customTitle === undefined) customTitle = null;
       }
       _countsMap[dateStr] = count;
       _colorsMap[dateStr] = customColor;
+      _titlesMap[dateStr] = customTitle;
     }
 
     const isToday = offsetFromToday === 0;
@@ -173,17 +204,13 @@ window.ActivityTracker = (() => {
     const isSelected = dateStr === _selectedDate;
 
     let label = count === 0 ? '' : `${count} note${count !== 1 ? 's' : ''}`;
-    if (customColor === 'red') {
-      label = label ? `${label} (Red Tag)` : '(Red Tag)';
-    } else if (customColor === 'green') {
-      label = label ? `${label} (Green Tag)` : '(Green Tag)';
-    }
 
-    if (isToday) {
-      label = label ? `${label} (Today)` : '(Today)';
-    } else if (isTomorrow) {
-      label = label ? `${label} (Tomorrow)` : '(Tomorrow)';
-    }
+    // Exact title override if set, otherwise default date and count
+    let tip = customTitle
+      ? customTitle
+      : label
+      ? `${formatDateLabel(d)}  ·  ${label}`
+      : formatDateLabel(d);
 
     return {
       date: dateStr,
@@ -191,10 +218,11 @@ window.ActivityTracker = (() => {
       count,
       level: getLevel(count),
       customColor: customColor || null,
+      customTitle: customTitle || null,
       isToday,
       isTomorrow,
       isSelected,
-      tip: label ? `${formatDateLabel(d)}  ·  ${label}` : formatDateLabel(d),
+      tip,
     };
   }
 
@@ -306,6 +334,8 @@ window.ActivityTracker = (() => {
     setDateCount,
     setActivityColors,
     setDateColor,
+    setActivityTitles,
+    setDateTitle,
     setActiveDate,
     getActiveDate,
     getTodayStr,
