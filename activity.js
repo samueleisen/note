@@ -21,8 +21,15 @@ window.ActivityTracker = (() => {
   let _colorsMap = {}; // In-memory map: { 'YYYY-MM-DD': 'red' | 'green' | 'purple' | 'yellow' | null }
   let _titlesMap = {}; // In-memory map: { 'YYYY-MM-DD': title }
 
+  function formatLocalDate(d) {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
   function getTodayStr() {
-    return new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
+    return formatLocalDate(new Date());
   }
 
   // -----------------------------------------------
@@ -162,9 +169,8 @@ window.ActivityTracker = (() => {
   }
 
   function createCellData(today, offsetFromToday) {
-    const d = new Date(today);
-    d.setDate(today.getDate() + offsetFromToday);
-    const dateStr = d.toISOString().slice(0, 10);
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + offsetFromToday);
+    const dateStr = formatLocalDate(d);
 
     let count = _countsMap[dateStr];
     let customColor = _colorsMap[dateStr];

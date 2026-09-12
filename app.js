@@ -50,14 +50,21 @@ const state = {
   currentStroke: null,
 };
 
+function formatLocalDate(d) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function getTodayStr() {
-  return new Date().toISOString().slice(0, 10);
+  return formatLocalDate(new Date());
 }
 
 function getCutoffDateStr() {
   const d = new Date();
   d.setDate(d.getDate() - 365); // 365-day (1 full year) retention window
-  return d.toISOString().slice(0, 10);
+  return formatLocalDate(d);
 }
 
 // Convert 'YYYY-MM-DD' (e.g. '2026-08-27') to short hash '0827'
@@ -2867,7 +2874,12 @@ function workspaceKey(dateStr) {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
       flushPendingSaves();
+    } else if (document.visibilityState === 'visible') {
+      window.ActivityTracker?.refresh();
     }
+  });
+  window.addEventListener('focus', () => {
+    window.ActivityTracker?.refresh();
   });
   window.addEventListener('pagehide', () => {
     flushPendingSaves();
