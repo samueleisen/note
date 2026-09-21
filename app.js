@@ -655,6 +655,8 @@ function workspaceKey(dateStr) {
 
     headerEl.addEventListener('touchstart', (e) => {
       if (e.target.closest('.note-actions')) return;
+      // Block note dragging in mobile read mode
+      if (window.MobileManager?.isMobile() && !window.MobileManager?.isEditMode()) return;
       if (e.touches && e.touches.length === 1) {
         e.stopPropagation();
         const touch = e.touches[0];
@@ -2269,9 +2271,9 @@ function workspaceKey(dateStr) {
     }, 600);
   }
 
-  function switchToDate(dateStr, updateHash = true) {
+  function switchToDate(dateStr, updateHash = true, skipFlush = false) {
     if (!dateStr || state.activeDate === dateStr) return;
-    flushPendingSaves();
+    if (!skipFlush) flushPendingSaves();
     if (updateHash) {
       const shortHash = dateToShortHash(dateStr);
       if (shortHash) {
@@ -2383,17 +2385,40 @@ function workspaceKey(dateStr) {
 
   function deleteCustomBoard(name) {
     if (!state.customBoards.has(name)) return;
+
+    // Step 1: Drain all pending save timers BEFORE touching any state.
+    // This prevents flushPendingSaves() (called inside switchToDate) from
+    // resurrecting the board by re-writing its data after the deletion.
+    clearTimeout(saveDebounceTimer);
+    saveDebounceTimer = null;
+    if (pendingCloudDate === name) {
+      clearTimeout(cloudSaveDebounceTimer);
+      cloudSaveDebounceTimer = null;
+      pendingCloudPayload = null;
+      pendingCloudDate = null;
+    }
+
+    // Step 2: Remove from in-memory set and persist the updated boards list.
     state.customBoards.delete(name);
     saveCustomBoards();
+
+    // Step 3: Wipe local storage for this board.
     localStorage.removeItem(workspaceKey(name));
+
+    // Step 4: Wipe the workspace from Firebase.
     if (state.currentUser) {
       const uid = state.currentUser.uid;
       const refWs = ref(database, `users/${uid}/workspaces/${name}`);
       set(refWs, null).catch(() => {});
     }
+
     renderCustomBoardsList();
+
+    // Step 5: If the deleted board was active, navigate away.
+    // skipFlush=true prevents switchToDate from calling flushPendingSaves(),
+    // which would re-save state.activeDate (still 'name' at this point).
     if (state.activeDate === name) {
-      switchToDate(getTodayStr());
+      switchToDate(getTodayStr(), true, true);
     }
   }
 
